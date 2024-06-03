@@ -1,6 +1,10 @@
 use serde_json::Value;
 use std::{
-    boxed::Box, error::Error, net::{IpAddr, SocketAddr, ToSocketAddrs}, ptr::read, sync::Arc
+    future::Future,
+    boxed::Box, 
+    error::Error, 
+    net::{IpAddr, SocketAddr, ToSocketAddrs}, 
+    sync::Arc
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::{
@@ -8,7 +12,6 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::Mutex,
 };
-use urlencoding::{decode, encode};
 
 #[derive(Clone, Debug)]
 pub struct Headers {
@@ -36,7 +39,7 @@ impl Headers {
     }
 
     pub fn contains_value(self, value: String) -> bool {
-        for (k, v) in self.entries {
+        for (_, v) in self.entries {
             if v == value {
                 return true;
             }
@@ -45,7 +48,7 @@ impl Headers {
     }
 
     pub fn contains_key(self, key: String) -> bool {
-        for (k, v) in self.entries {
+        for (k, _) in self.entries {
             if k == key.to_lowercase() {
                 return true;
             }
@@ -83,7 +86,7 @@ impl Headers {
 
     pub fn keys(self) -> Vec<String> {
         let mut keys = Vec::new();
-        for (k, v) in self.entries {
+        for (k, _) in self.entries {
             keys.push(k.to_lowercase());
         }
         keys
@@ -91,7 +94,7 @@ impl Headers {
 
     pub fn values(self) -> Vec<String> {
         let mut values = Vec::new();
-        for (k, v) in self.entries {
+        for (_, v) in self.entries {
             values.push(v);
         }
         values
@@ -169,16 +172,16 @@ impl Error for HttpError {}
 
 async fn read_line(data: &mut BufReader<&mut TcpStream>) -> Result<String, HttpError> {
     let mut buf = String::new();
-    let mut buf = match data.read_line(&mut buf).await {
+    match data.read_line(&mut buf).await {
         Ok(i) => {
             if i == 0 {
-                return Err(HttpError::ReadLineEof);
+                Err(HttpError::ReadLineEof)
+            } else {
+                Ok(buf)
             }
-            buf
         }
-        Err(_) => return Err(HttpError::ReadLineUnknown),
-    };
-    Ok(buf.to_string())
+        Err(_) => Err(HttpError::ReadLineUnknown),
+    }
 }
 
 async fn read_line_crlf(data: &mut BufReader<&mut TcpStream>) -> Result<String, HttpError> {
@@ -242,15 +245,12 @@ impl HttpRequest {
             _ => [127, 0, 0, 1],
         };
 
-        let ip_str = octets[0].to_string().as_str().to_owned()
-            + "."
-            + octets[1].to_string().as_str()
-            + "."
-            + octets[2].to_string().as_str()
-            + "."
-            + octets[3].to_string().as_str();
+        let ip_str = octets[0].to_string()
+            + "." + &octets[1].to_string()
+            + "." + &octets[2].to_string()
+            + "." + &octets[3].to_string();
 
-        let mut status = split(
+        let status = split(
             match read_line_crlf(&mut data).await {
                 Ok(i) => i,
                 Err(e) => return Err(e),
@@ -295,11 +295,11 @@ impl HttpRequest {
                 };
 
                 params.insert(
-                    match decode(k) {
+                    match urlencoding::decode(k) {
                         Ok(i) => i.to_string(),
                         Err(_) => return Err(HttpError::InvalidQuery),
                     },
-                    match decode(v) {
+                    match urlencoding::decode(v) {
                         Ok(i) => Value::String(i.to_string()),
                         Err(_) => return Err(HttpError::InvalidQuery),
                     },
@@ -374,11 +374,11 @@ impl HttpRequest {
                         };
 
                         params.insert(
-                            match decode(k) {
+                            match urlencoding::decode(k) {
                                 Ok(i) => i.to_string(),
                                 Err(_) => return Err(HttpError::InvalidQuery),
                             },
-                            match decode(v) {
+                            match urlencoding::decode(v) {
                                 Ok(i) => Value::String(i.to_string()),
                                 Err(_) => return Err(HttpError::InvalidQuery),
                             },
@@ -399,7 +399,7 @@ impl HttpRequest {
         })
     }
 
-    pub async fn read_with_rrs(mut data: BufReader<&mut TcpStream>, addr: &SocketAddr) -> Result<HttpRequest, HttpError> {
+    pub async fn read_with_rrs(mut data: BufReader<&mut TcpStream>) -> Result<HttpRequest, HttpError> {
         let addr = match read_line_lf(&mut data).await {
             Ok(i) => i,
             Err(e) => { return Err(e); }
@@ -415,9 +415,9 @@ impl HttpRequest {
         if let Value::Object(obj) = self.params.clone() {
             for (k, v) in obj {
                 query.push_str(if i { "?" } else { "&" });
-                query.push_str(encode(k.as_str()).to_string().as_str());
+                query.push_str(urlencoding::encode(k.as_str()).to_string().as_str());
                 query.push_str("=");
-                query.push_str(encode(v.as_str().unwrap()).to_string().as_str());
+                query.push_str(urlencoding::encode(v.as_str().unwrap()).to_string().as_str());
                 i = false;
             }
         }
@@ -547,9 +547,9 @@ impl HttpResponse {
             loop {
                 let mut buf: Vec<u8> = vec![0; 1024 * 32];
 
-                let mut buf_len: usize = match data.read(&mut buf).await {
+                let buf_len = match data.read(&mut buf).await {
                     Ok(i) => i,
-                    Err(e) => {
+                    Err(_) => {
                         break;
                     }
                 };
@@ -601,18 +601,15 @@ impl HttpResponse {
 }
 
 pub trait HttpServer: Sync {
-    async fn on_start(&mut self, host: &str, listener: &TcpListener);
-    async fn on_close(&mut self);
-    fn on_request(&mut self, req: &HttpRequest) -> impl std::future::Future<Output = Option<HttpResponse>> + std::marker::Send;
+    fn on_start(&mut self, host: &str, listener: &TcpListener) -> impl Future<Output = ()> + Send;
+    fn on_close(&mut self) -> impl Future<Output = ()> + Send;
+    fn on_request(&mut self, req: &HttpRequest) -> impl Future<Output = Option<HttpResponse>> + Send;
 }
 
-pub async fn handle_connection<S: HttpServer + Send + 'static>(
+async fn handle_connection<S: HttpServer + Send + 'static>(
     server: Arc<Mutex<S>>,
-    mut sock: TcpStream,
-    addr: std::net::SocketAddr,
-) where
-    S: HttpServer,
-{
+    mut sock: TcpStream
+) {
     let addr = sock.peer_addr().unwrap();
 
     let req = match HttpRequest::read(BufReader::new(&mut sock), &addr).await {
@@ -630,20 +627,20 @@ pub async fn handle_connection<S: HttpServer + Send + 'static>(
     resp.write(&mut sock).await.unwrap();
 }
 
-pub async fn start_server(mut server: impl HttpServer + Send + 'static, host: &str) -> Result<(), Box<dyn Error>> {
+pub async fn start_server(server: impl HttpServer + Send + 'static, host: &str) -> Result<(), Box<dyn Error>> {
     let server = Arc::new(Mutex::new(server));
     let listener = TcpListener::bind(host).await?;
     
     server.lock().await.on_start(host, &listener).await;
 
     loop {
-        let (sock, addr) = match listener.accept().await {
+        let (sock, _) = match listener.accept().await {
             Ok(i) => i,
             Err(_) => { break; }
         };
 
         let now_server = Arc::clone(&server);
-        tokio::spawn(handle_connection(now_server, sock, addr));
+        tokio::spawn(handle_connection(now_server, sock));
     }
 
     server.lock().await.on_close().await;
@@ -653,20 +650,20 @@ pub async fn start_server(mut server: impl HttpServer + Send + 'static, host: &s
 
 
 // http rrs
-pub async fn start_server_rrs(mut server: impl HttpServer + Send + 'static, host: &str) -> Result<(), Box<dyn Error>> {
+pub async fn start_server_rrs(server: impl HttpServer + Send + 'static, host: &str) -> Result<(), Box<dyn Error>> {
     let server = Arc::new(Mutex::new(server));
     let listener = TcpListener::bind(host).await?;
     
     server.lock().await.on_start(host, &listener).await;
 
     loop {
-        let (sock, addr) = match listener.accept().await {
+        let (sock, _) = match listener.accept().await {
             Ok(i) => i,
             Err(_) => { break; }
         };
 
         let now_server = Arc::clone(&server);
-        tokio::spawn(handle_connection_rrs(now_server, sock, addr));
+        tokio::spawn(handle_connection_rrs(now_server, sock));
     }
 
     server.lock().await.on_close().await;
@@ -678,10 +675,9 @@ pub async fn start_server_rrs(mut server: impl HttpServer + Send + 'static, host
 // http rrs
 async fn handle_connection_rrs<S: HttpServer + Send + 'static>(
     server: Arc<Mutex<S>>,
-    mut sock: TcpStream,
-    addr: std::net::SocketAddr,
+    mut sock: TcpStream
 ) {
-    let req = match HttpRequest::read_with_rrs(BufReader::new(&mut sock), &addr).await {
+    let req = match HttpRequest::read_with_rrs(BufReader::new(&mut sock)).await {
         Ok(i) => i,
         Err(_) => {
             return;

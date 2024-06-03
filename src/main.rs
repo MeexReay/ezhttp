@@ -24,7 +24,7 @@ impl HttpServer for EzSite {
         }
     }
 
-    async fn on_start(&mut self, host: &str, listener: &TcpListener) {
+    async fn on_start(&mut self, host: &str, _listener: &TcpListener) {
         println!("Http server started on {}", host);
     }
 
