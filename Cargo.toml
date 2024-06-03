@@ -3,6 +3,7 @@ name = "ezhttp"
 version = "0.1.0"
 edition = "2021"
 
+repository = "https://github.com/MeexReay/ezhttp"
 description = "lightweight http server"
 license-file = "LICENSE"
 readme = "README.md"
