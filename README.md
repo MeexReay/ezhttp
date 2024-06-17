@@ -3,12 +3,10 @@ Easy http server on rust
 
 Example:
 ```rust
-
-use ezhttp::{Headers, HttpResponse, HttpRequest, HttpServer};
-use tokio::{runtime::Runtime, net::TcpListener};
+use ezhttp::{Headers, HttpRequest, HttpResponse, HttpServer};
 
 struct EzSite {
-    index_page: String
+    index_page: String,
 }
 
 impl HttpServer for EzSite {
@@ -16,21 +14,17 @@ impl HttpServer for EzSite {
         println!("{} > {} {}", req.addr, req.method, req.page);
 
         if req.page == "/" {
-            Some(
-                HttpResponse::from_str(
-                    Headers::from(vec![
-                        ("Content-Type", "text/html")
-                    ]), 
-                    "200 OK".to_string(), 
-                    &self.index_page
-                )
-            )
+            Some(HttpResponse::from_str(
+                Headers::from(vec![("Content-Type", "text/html")]),
+                "200 OK".to_string(),
+                &self.index_page,
+            ))
         } else {
             None // just shutdown socket
         }
     }
 
-    async fn on_start(&mut self, host: &str, _listener: &TcpListener) {
+    async fn on_start(&mut self, host: &str) {
         println!("Http server started on {}", host);
     }
 
@@ -42,7 +36,7 @@ impl HttpServer for EzSite {
 impl EzSite {
     fn new(index_page: &str) -> Self {
         EzSite {
-            index_page: index_page.to_string()
+            index_page: index_page.to_string(),
         }
     }
 }
@@ -51,9 +45,7 @@ fn main() {
     let site = EzSite::new("Hello World!");
     let host = "localhost:8080";
 
-    Runtime::new().unwrap().block_on(async move {
-        ezhttp::start_server(site, host).await.unwrap();
-    });
+    ezhttp::start_server(site, host).unwrap();
 }
 
 ```
