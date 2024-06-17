@@ -1,14 +1,16 @@
+use futures::executor::block_on;
 use serde_json::Value;
+use std::io::{Read, Write};
+use std::time::Duration;
 use std::{
     boxed::Box,
     error::Error,
     future::Future,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
     sync::Arc,
+    thread,
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::{
-    io::AsyncBufReadExt,
+use std::{
     net::{TcpListener, TcpStream},
     sync::Mutex,
 };
@@ -170,29 +172,37 @@ impl std::fmt::Display for HttpError {
 
 impl Error for HttpError {}
 
-async fn read_line(data: &mut BufReader<&mut TcpStream>) -> Result<String, HttpError> {
-    let mut buf = String::new();
-    match data.read_line(&mut buf).await {
-        Ok(i) => {
-            if i == 0 {
-                Err(HttpError::ReadLineEof)
-            } else {
-                Ok(buf)
-            }
+fn read_line(data: &mut TcpStream) -> Result<String, HttpError> {
+    let mut bytes = Vec::new();
+
+    for byte in data.bytes() {
+        let byte = match byte {
+            Ok(i) => i,
+            Err(_) => return Err(HttpError::ReadLineEof),
+        };
+
+        bytes.push(byte);
+
+        if byte == 0x0A {
+            break;
         }
+    }
+
+    match String::from_utf8(bytes) {
+        Ok(i) => Ok(i),
         Err(_) => Err(HttpError::ReadLineUnknown),
     }
 }
 
-async fn read_line_crlf(data: &mut BufReader<&mut TcpStream>) -> Result<String, HttpError> {
-    match read_line(data).await {
+fn read_line_crlf(data: &mut TcpStream) -> Result<String, HttpError> {
+    match read_line(data) {
         Ok(i) => Ok(i[..i.len() - 2].to_string()),
         Err(e) => Err(e),
     }
 }
 
-async fn read_line_lf(data: &mut BufReader<&mut TcpStream>) -> Result<String, HttpError> {
-    match read_line(data).await {
+fn read_line_lf(data: &mut TcpStream) -> Result<String, HttpError> {
+    match read_line(data) {
         Ok(i) => Ok(i[..i.len() - 1].to_string()),
         Err(e) => Err(e),
     }
@@ -239,10 +249,7 @@ impl HttpRequest {
         }
     }
 
-    pub async fn read(
-        mut data: BufReader<&mut TcpStream>,
-        addr: &SocketAddr,
-    ) -> Result<HttpRequest, HttpError> {
+    pub fn read(data: &mut TcpStream, addr: &SocketAddr) -> Result<HttpRequest, HttpError> {
         let octets = match addr.ip() {
             IpAddr::V4(ip) => ip.octets(),
             _ => [127, 0, 0, 1],
@@ -257,7 +264,7 @@ impl HttpRequest {
             + &octets[3].to_string();
 
         let status = split(
-            match read_line_crlf(&mut data).await {
+            match read_line_crlf(data) {
                 Ok(i) => i,
                 Err(e) => return Err(e),
             },
@@ -274,7 +281,7 @@ impl HttpRequest {
         let mut headers = Headers::new();
 
         loop {
-            let text = match read_line_crlf(&mut data).await {
+            let text = match read_line_crlf(data) {
                 Ok(i) => i,
                 Err(_) => return Err(HttpError::InvalidHeaders),
             };
@@ -325,7 +332,7 @@ impl HttpRequest {
                 let mut buf: Vec<u8> = Vec::new();
                 buf.resize(content_size - reqdata.len(), 0);
 
-                match data.read_exact(&mut buf).await {
+                match data.read_exact(&mut buf) {
                     Ok(i) => i,
                     Err(_) => return Err(HttpError::InvalidContent),
                 };
@@ -405,10 +412,8 @@ impl HttpRequest {
         })
     }
 
-    pub async fn read_with_rrs(
-        mut data: BufReader<&mut TcpStream>,
-    ) -> Result<HttpRequest, HttpError> {
-        let addr = match read_line_lf(&mut data).await {
+    pub fn read_with_rrs(data: &mut TcpStream) -> Result<HttpRequest, HttpError> {
+        let addr = match read_line_lf(data) {
             Ok(i) => i,
             Err(e) => {
                 return Err(e);
@@ -417,7 +422,7 @@ impl HttpRequest {
         .to_socket_addrs()
         .unwrap()
         .collect::<Vec<SocketAddr>>()[0];
-        HttpRequest::read(data, &addr).await
+        HttpRequest::read(data, &addr)
     }
 
     pub fn params_to_page(&mut self) {
@@ -442,7 +447,7 @@ impl HttpRequest {
         self.page += query.as_str();
     }
 
-    pub async fn write(self, data: &mut TcpStream) -> Result<(), HttpError> {
+    pub fn write(self, data: &mut TcpStream) -> Result<(), HttpError> {
         let mut head: String = String::new();
         head.push_str(&self.method);
         head.push_str(" ");
@@ -459,13 +464,13 @@ impl HttpRequest {
 
         head.push_str("\r\n");
 
-        match data.write_all(head.as_bytes()).await {
+        match data.write_all(head.as_bytes()) {
             Ok(i) => i,
             Err(_) => return Err(HttpError::WriteHeadError),
         };
 
         if !self.data.is_empty() {
-            match data.write_all(&self.data).await {
+            match data.write_all(&self.data) {
                 Ok(i) => i,
                 Err(_) => return Err(HttpError::WriteBodyError),
             };
@@ -506,10 +511,8 @@ impl HttpResponse {
         }
     }
 
-    pub async fn read(dread: &mut TcpStream) -> Result<HttpResponse, HttpError> {
-        let mut data = BufReader::new(dread);
-
-        let status = match read_line_crlf(&mut data).await {
+    pub fn read(data: &mut TcpStream) -> Result<HttpResponse, HttpError> {
+        let status = match read_line_crlf(data) {
             Ok(i) => i,
             Err(e) => {
                 return Err(e);
@@ -524,7 +527,7 @@ impl HttpResponse {
         let mut headers = Headers::new();
 
         loop {
-            let text = match read_line_crlf(&mut data).await {
+            let text = match read_line_crlf(data) {
                 Ok(i) => i,
                 Err(_) => return Err(HttpError::InvalidHeaders),
             };
@@ -553,7 +556,7 @@ impl HttpResponse {
                 let mut buf: Vec<u8> = Vec::new();
                 buf.resize(content_size - reqdata.len(), 0);
 
-                match data.read_exact(&mut buf).await {
+                match data.read_exact(&mut buf) {
                     Ok(i) => i,
                     Err(_) => return Err(HttpError::InvalidContent),
                 };
@@ -564,7 +567,7 @@ impl HttpResponse {
             loop {
                 let mut buf: Vec<u8> = vec![0; 1024 * 32];
 
-                let buf_len = match data.read(&mut buf).await {
+                let buf_len = match data.read(&mut buf) {
                     Ok(i) => i,
                     Err(_) => {
                         break;
@@ -588,7 +591,7 @@ impl HttpResponse {
         })
     }
 
-    pub async fn write(self, data: &mut TcpStream) -> Result<(), &str> {
+    pub fn write(self, data: &mut TcpStream) -> Result<(), &str> {
         let mut head: String = String::new();
         head.push_str("HTTP/1.1 ");
         head.push_str(&self.status_code);
@@ -603,12 +606,12 @@ impl HttpResponse {
 
         head.push_str("\r\n");
 
-        match data.write_all(head.as_bytes()).await {
+        match data.write_all(head.as_bytes()) {
             Ok(i) => i,
             Err(_) => return Err("write head error"),
         };
 
-        match data.write_all(&self.data).await {
+        match data.write_all(&self.data) {
             Ok(i) => i,
             Err(_) => return Err("write body error"),
         };
@@ -618,7 +621,7 @@ impl HttpResponse {
 }
 
 pub trait HttpServer: Sync {
-    fn on_start(&mut self, host: &str, listener: &TcpListener) -> impl Future<Output = ()> + Send;
+    fn on_start(&mut self, host: &str) -> impl Future<Output = ()> + Send;
     fn on_close(&mut self) -> impl Future<Output = ()> + Send;
     fn on_request(
         &mut self,
@@ -626,96 +629,118 @@ pub trait HttpServer: Sync {
     ) -> impl Future<Output = Option<HttpResponse>> + Send;
 }
 
-async fn handle_connection<S: HttpServer + Send + 'static>(
-    server: Arc<Mutex<S>>,
-    mut sock: TcpStream,
-) {
+fn start_server_with_handler<F, S>(
+    server: S,
+    host: &str,
+    timeout: Option<Duration>,
+    handler: F,
+) -> Result<(), Box<dyn Error>>
+where
+    F: Fn(Arc<Mutex<S>>, TcpStream) -> (),
+    S: HttpServer + Send + 'static,
+    F: Send + 'static,
+{
+    let server = Arc::new(Mutex::new(server));
+    let listener = TcpListener::bind(host)?;
+
+    let host_clone = String::from(host).clone();
+    let server_clone = server.clone();
+    thread::spawn(move || block_on(server_clone.lock().unwrap().on_start(&host_clone)));
+
+    loop {
+        let (sock, _) = match listener.accept() {
+            Ok(i) => i,
+            Err(_) => {
+                break;
+            }
+        };
+
+        sock.set_read_timeout(timeout).unwrap();
+        sock.set_write_timeout(timeout).unwrap();
+
+        let now_server = Arc::clone(&server);
+        handler(now_server, sock);
+    }
+
+    thread::spawn(move || block_on(server.lock().unwrap().on_close()));
+
+    Ok(())
+}
+
+pub fn start_server(
+    server: impl HttpServer + Send + 'static,
+    host: &str,
+) -> Result<(), Box<dyn Error>> {
+    start_server_with_handler(server, host, None, move |server, sock| {
+        thread::spawn(move || handle_connection(server, sock));
+    })
+}
+
+// http rrs support
+pub fn start_server_rrs(
+    server: impl HttpServer + Send + 'static,
+    host: &str,
+) -> Result<(), Box<dyn Error>> {
+    start_server_with_handler(server, host, None, move |server, sock| {
+        thread::spawn(move || handle_connection_rrs(server, sock));
+    })
+}
+
+pub fn start_server_timeout(
+    server: impl HttpServer + Send + 'static,
+    host: &str,
+    timeout: Duration,
+) -> Result<(), Box<dyn Error>> {
+    start_server_with_handler(server, host, Some(timeout), move |server, sock| {
+        thread::spawn(move || handle_connection(server, sock));
+    })
+}
+
+// http rrs support
+pub fn start_server_rrs_timeout(
+    server: impl HttpServer + Send + 'static,
+    host: &str,
+    timeout: Duration,
+) -> Result<(), Box<dyn Error>> {
+    start_server_with_handler(server, host, Some(timeout), move |server, sock| {
+        thread::spawn(move || handle_connection_rrs(server, sock));
+    })
+}
+
+fn handle_connection<S: HttpServer + Send + 'static>(server: Arc<Mutex<S>>, mut sock: TcpStream) {
     let addr = sock.peer_addr().unwrap();
 
-    let req = match HttpRequest::read(BufReader::new(&mut sock), &addr).await {
+    let req = match HttpRequest::read(&mut sock, &addr) {
         Ok(i) => i,
         Err(_) => {
             return;
         }
     };
-    let resp = match server.lock().await.on_request(&req).await {
+    let resp = match block_on(server.lock().unwrap().on_request(&req)) {
         Some(i) => i,
         None => {
             return;
         }
     };
-    resp.write(&mut sock).await.unwrap();
-}
-
-pub async fn start_server(
-    server: impl HttpServer + Send + 'static,
-    host: &str,
-) -> Result<(), Box<dyn Error>> {
-    let server = Arc::new(Mutex::new(server));
-    let listener = TcpListener::bind(host).await?;
-
-    server.lock().await.on_start(host, &listener).await;
-
-    loop {
-        let (sock, _) = match listener.accept().await {
-            Ok(i) => i,
-            Err(_) => {
-                break;
-            }
-        };
-
-        let now_server = Arc::clone(&server);
-        tokio::spawn(handle_connection(now_server, sock));
-    }
-
-    server.lock().await.on_close().await;
-
-    Ok(())
+    resp.write(&mut sock).unwrap();
 }
 
 // http rrs support
-pub async fn start_server_rrs(
-    server: impl HttpServer + Send + 'static,
-    host: &str,
-) -> Result<(), Box<dyn Error>> {
-    let server = Arc::new(Mutex::new(server));
-    let listener = TcpListener::bind(host).await?;
-
-    server.lock().await.on_start(host, &listener).await;
-
-    loop {
-        let (sock, _) = match listener.accept().await {
-            Ok(i) => i,
-            Err(_) => {
-                break;
-            }
-        };
-
-        let now_server = Arc::clone(&server);
-        tokio::spawn(handle_connection_rrs(now_server, sock));
-    }
-
-    server.lock().await.on_close().await;
-
-    Ok(())
-}
-
-// http rrs support
-async fn handle_connection_rrs<S: HttpServer + Send + 'static>(
+fn handle_connection_rrs<S: HttpServer + Send + 'static>(
     server: Arc<Mutex<S>>,
     mut sock: TcpStream,
 ) {
-    let req = match HttpRequest::read_with_rrs(BufReader::new(&mut sock)).await {
+    let req = match HttpRequest::read_with_rrs(&mut sock) {
         Ok(i) => i,
         Err(_) => {
             return;
         }
     };
-    let resp = match server.lock().await.on_request(&req).await {
+    let resp = match block_on(server.lock().unwrap().on_request(&req)) {
         Some(i) => i,
         None => {
             return;
         }
     };
-    resp.write(&mut sock).await.unwrap();
+    resp.write(&mut sock).unwrap();
 }
