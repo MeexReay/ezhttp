@@ -37,7 +37,7 @@ impl EzSite {
 }
 
 fn main() {
-    let site = EzSite::new("Hello World!");
+    let site = EzSite::new(&"Hello World!".repeat(99999));
     let host = "localhost:8080";
 
     ezhttp::start_server(site, host).unwrap();

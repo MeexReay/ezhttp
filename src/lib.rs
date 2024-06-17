@@ -645,7 +645,7 @@ where
 
     let host_clone = String::from(host).clone();
     let server_clone = server.clone();
-    thread::spawn(move || block_on(server_clone.lock().unwrap().on_start(&host_clone)));
+    block_on(server_clone.lock().unwrap().on_start(&host_clone));
 
     loop {
         let (sock, _) = match listener.accept() {
@@ -662,7 +662,7 @@ where
         handler(now_server, sock);
     }
 
-    thread::spawn(move || block_on(server.lock().unwrap().on_close()));
+    block_on(server.lock().unwrap().on_close());
 
     Ok(())
 }
