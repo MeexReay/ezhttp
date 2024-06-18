@@ -17,9 +17,9 @@ impl HttpServer for EzSite {
 
         if req.page == "/" {
             Some(HttpResponse::from_str(
-                Headers::from(vec![("Content-Type", "text/html")]),
-                "200 OK".to_string(),
-                &self.index_page,
+                Headers::from(vec![("Content-Type", "text/html")]), // response headers
+                "200 OK".to_string(),                               // response status code
+                &self.index_page,                                   // response body
             ))
         } else {
             None // just shutdown socket
@@ -49,5 +49,6 @@ fn main() {
 
     ezhttp::start_server(site, host).unwrap();
 }
-
 ```
+
+[More examples](https://github.com/MeexReay/ezhttp/blob/main/examples)

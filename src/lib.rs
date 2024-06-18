@@ -497,6 +497,14 @@ impl HttpResponse {
         }
     }
 
+    pub fn from_string(headers: Headers, status_code: String, data: String) -> Self {
+        HttpResponse {
+            headers: headers,
+            data: data.into_bytes(),
+            status_code: status_code,
+        }
+    }
+
     pub fn get_text(self) -> String {
         match String::from_utf8(self.data) {
             Ok(i) => i,

@@ -15,7 +15,7 @@ impl HttpServer for EzSite {
                 &self.index_page,                                   // response body
             ))
         } else {
-            None // shutdown request
+            None // just shutdown socket
         }
     }
 
@@ -37,10 +37,8 @@ impl EzSite {
 }
 
 fn main() {
-    let site = EzSite::new(&"Hello World!".repeat(99999));
+    let site = EzSite::new("Hello World!");
     let host = "localhost:8080";
 
     ezhttp::start_server(site, host).unwrap();
-
-    // ezhttp::start_server_timeout(site, host, Duration::from_secs(5)).unwrap(); // with read and write timeout
 }
