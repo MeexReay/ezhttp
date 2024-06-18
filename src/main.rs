@@ -10,12 +10,12 @@ impl HttpServer for EzSite {
 
         if req.page == "/" {
             Some(HttpResponse::from_str(
-                Headers::from(vec![("Content-Type", "text/html")]),
-                "200 OK".to_string(),
-                &self.index_page,
+                Headers::from(vec![("Content-Type", "text/html")]), // response headers
+                "200 OK".to_string(),                               // response status code
+                &self.index_page,                                   // response body
             ))
         } else {
-            None // just shutdown socket
+            None // shutdown request
         }
     }
 
@@ -41,4 +41,6 @@ fn main() {
     let host = "localhost:8080";
 
     ezhttp::start_server(site, host).unwrap();
+
+    // ezhttp::start_server_timeout(site, host, Duration::from_secs(5)).unwrap(); // with read and write timeout
 }

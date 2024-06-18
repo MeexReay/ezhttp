@@ -1,6 +1,8 @@
 # EzHttp
 Easy http server on rust
 
+This library is under developement, so if you found any bugs, please write them to [Issues](https://github.com/MeexReay/ezhttp/issues)
+
 Example:
 ```rust
 use ezhttp::{Headers, HttpRequest, HttpResponse, HttpServer};
