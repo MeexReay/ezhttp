@@ -801,11 +801,13 @@ where
     let server_clone = server.clone();
     block_on(server_clone.lock().unwrap().on_start(&host_clone));
 
+    listener.set_nonblocking(true)?;
+
     while running.load(Ordering::Acquire) {
         let (sock, _) = match listener.accept() {
             Ok(i) => i,
             Err(_) => {
-                break;
+                continue;
             }
         };
 
@@ -847,7 +849,7 @@ where
         let (sock, _) = match listener.accept() {
             Ok(i) => i,
             Err(_) => {
-                break;
+                continue;
             }
         };
 
@@ -887,7 +889,7 @@ where
         let (sock, _) = match listener.accept() {
             Ok(i) => i,
             Err(_) => {
-                break;
+                continue;
             }
         };
 
@@ -944,7 +946,7 @@ type Job = Box<dyn FnOnce() + Send + 'static>;
 
 struct ThreadPool {
     workers: Vec<Worker>,
-    sender: mpsc::Sender<Job>,
+    sender: mpsc::Sender<Option<Job>>,
 }
 
 impl ThreadPool {
@@ -964,6 +966,10 @@ impl ThreadPool {
     }
 
     fn join(self) {
+        for _ in 0..self.workers.len() {
+            self.sender.send(None).unwrap();
+        }
+
         for ele in self.workers.into_iter() {
             ele.thread.join().unwrap();
         }
@@ -975,7 +981,7 @@ impl ThreadPool {
     {
         let job = Box::new(f);
 
-        self.sender.send(job).unwrap();
+        self.sender.send(Some(job)).unwrap();
     }
 }
 
@@ -984,9 +990,9 @@ struct Worker {
 }
 
 impl Worker {
-    fn new(receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
+    fn new(receiver: Arc<Mutex<mpsc::Receiver<Option<Job>>>>) -> Worker {
         let thread = thread::spawn(move || {
-            while let Ok(job) = receiver.lock().unwrap().recv() {
+            while let Ok(Some(job)) = receiver.lock().unwrap().recv() {
                 job();
             }
         });
