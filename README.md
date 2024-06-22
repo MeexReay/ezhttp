@@ -51,7 +51,7 @@ fn main() {
     HttpServerStarter::new(site, host)
         .timeout(Some(Duration::from_secs(5))) // read & write timeout
         .threads(5) // threadpool size
-        .start()
+        .start_forever()
         .expect("http server error");
 }
 ```
