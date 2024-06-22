@@ -70,6 +70,6 @@ fn main() {
     HttpServerStarter::new(site, host)
         .timeout(Some(Duration::from_secs(5)))
         .threads(5)
-        .start()
+        .start_forever()
         .expect("http server error");
 }
