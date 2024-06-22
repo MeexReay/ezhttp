@@ -1,4 +1,5 @@
-use ezhttp::{Headers, HttpRequest, HttpResponse, HttpServer};
+use ezhttp::{Headers, HttpRequest, HttpResponse, HttpServer, HttpServerStarter};
+use std::time::Duration;
 
 struct EzSite {
     main_page: String,
@@ -66,5 +67,9 @@ fn main() {
     let site = EzSite::new("<h1>Hello World!</h1>");
     let host = "localhost:8080";
 
-    ezhttp::start_server(site, host).unwrap();
+    HttpServerStarter::new(site, host)
+        .timeout(Some(Duration::from_secs(5)))
+        .threads(5)
+        .start()
+        .expect("http server error");
 }

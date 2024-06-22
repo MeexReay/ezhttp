@@ -1,7 +1,16 @@
-use ezhttp::{Headers, HttpRequest, HttpResponse, HttpServer};
+use ezhttp::{Headers, HttpRequest, HttpResponse, HttpServer, HttpServerStarter};
+use std::time::Duration;
 
 struct EzSite {
     index_page: String,
+}
+
+impl EzSite {
+    fn new(index_page: &str) -> Self {
+        EzSite {
+            index_page: index_page.to_string(),
+        }
+    }
 }
 
 impl HttpServer for EzSite {
@@ -15,7 +24,7 @@ impl HttpServer for EzSite {
                 &self.index_page,                                   // response body
             ))
         } else {
-            None // just shutdown socket
+            None // close connection
         }
     }
 
@@ -28,17 +37,13 @@ impl HttpServer for EzSite {
     }
 }
 
-impl EzSite {
-    fn new(index_page: &str) -> Self {
-        EzSite {
-            index_page: index_page.to_string(),
-        }
-    }
-}
-
 fn main() {
     let site = EzSite::new("Hello World!");
     let host = "localhost:8080";
 
-    ezhttp::start_server(site, host).unwrap();
+    HttpServerStarter::new(site, host)
+        .timeout(Some(Duration::from_secs(5))) // read & write timeout
+        .threads(5) // threadpool size
+        .start()
+        .expect("http server error");
 }

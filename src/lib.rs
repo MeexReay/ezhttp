@@ -12,7 +12,7 @@ use std::{
 };
 use std::{
     net::{TcpListener, TcpStream},
-    sync::Mutex,
+    sync::{mpsc, Mutex},
 };
 
 #[derive(Clone, Debug)]
@@ -628,7 +628,7 @@ impl HttpResponse {
     }
 }
 
-pub trait HttpServer: Sync {
+pub trait HttpServer {
     fn on_start(&mut self, host: &str) -> impl Future<Output = ()> + Send;
     fn on_close(&mut self) -> impl Future<Output = ()> + Send;
     fn on_request(
@@ -637,16 +637,166 @@ pub trait HttpServer: Sync {
     ) -> impl Future<Output = Option<HttpResponse>> + Send;
 }
 
-fn start_server_with_handler<F, S>(
+pub struct HttpServerStarter<T: HttpServer + Send + 'static> {
+    http_server: T,
+    support_http_rrs: bool,
+    timeout: Option<Duration>,
+    host: String,
+    threads: usize,
+}
+
+impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
+    pub fn new(http_server: T, host: &str) -> Self {
+        HttpServerStarter {
+            http_server,
+            support_http_rrs: false,
+            timeout: None,
+            host: host.to_string(),
+            threads: 0,
+        }
+    }
+
+    pub fn http_server(mut self, http_server: T) -> Self {
+        self.http_server = http_server;
+        return self;
+    }
+
+    pub fn support_http_rrs(mut self, support_http_rrs: bool) -> Self {
+        self.support_http_rrs = support_http_rrs;
+        return self;
+    }
+
+    pub fn timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.timeout = timeout;
+        return self;
+    }
+
+    pub fn host(mut self, host: String) -> Self {
+        self.host = host;
+        return self;
+    }
+
+    pub fn threads(mut self, threads: usize) -> Self {
+        self.threads = threads;
+        return self;
+    }
+
+    pub fn start(self) -> Result<(), Box<dyn Error>> {
+        let handler = if self.support_http_rrs {
+            move |server, sock| {
+                handle_connection_rrs(server, sock);
+            }
+        } else {
+            move |server, sock| {
+                handle_connection(server, sock);
+            }
+        };
+
+        if self.threads == 0 {
+            start_server(self.http_server, &self.host, self.timeout, handler)
+        } else if self.threads == 1 {
+            start_server_sync(self.http_server, &self.host, self.timeout, handler)
+        } else {
+            start_server_with_threadpool(
+                self.http_server,
+                &self.host,
+                self.timeout,
+                self.threads,
+                handler,
+            )
+        }
+    }
+}
+
+fn start_server_with_threadpool<F, S>(
+    server: S,
+    host: &str,
+    timeout: Option<Duration>,
+    threads: usize,
+    handler: F,
+) -> Result<(), Box<dyn Error>>
+where
+    F: (Fn(Arc<Mutex<S>>, TcpStream) -> ()) + Send + 'static + Copy,
+    S: HttpServer + Send + 'static,
+{
+    let threadpool = ThreadPool::new(threads);
+    let server = Arc::new(Mutex::new(server));
+    let listener = TcpListener::bind(host)?;
+
+    let host_clone = String::from(host).clone();
+    let server_clone = server.clone();
+    block_on(server_clone.lock().unwrap().on_start(&host_clone));
+
+    loop {
+        let (sock, _) = match listener.accept() {
+            Ok(i) => i,
+            Err(_) => {
+                break;
+            }
+        };
+
+        sock.set_read_timeout(timeout).unwrap();
+        sock.set_write_timeout(timeout).unwrap();
+
+        let now_server = Arc::clone(&server);
+        threadpool.execute(move || {
+            handler(now_server, sock);
+        });
+    }
+
+    block_on(server.lock().unwrap().on_close());
+
+    Ok(())
+}
+
+fn start_server<F, S>(
     server: S,
     host: &str,
     timeout: Option<Duration>,
     handler: F,
 ) -> Result<(), Box<dyn Error>>
 where
-    F: Fn(Arc<Mutex<S>>, TcpStream) -> (),
+    F: (Fn(Arc<Mutex<S>>, TcpStream) -> ()) + Send + 'static + Copy,
     S: HttpServer + Send + 'static,
-    F: Send + 'static,
+{
+    let server = Arc::new(Mutex::new(server));
+    let listener = TcpListener::bind(host)?;
+
+    let host_clone = String::from(host).clone();
+    let server_clone = server.clone();
+    block_on(server_clone.lock().unwrap().on_start(&host_clone));
+
+    loop {
+        let (sock, _) = match listener.accept() {
+            Ok(i) => i,
+            Err(_) => {
+                break;
+            }
+        };
+
+        sock.set_read_timeout(timeout).unwrap();
+        sock.set_write_timeout(timeout).unwrap();
+
+        let now_server = Arc::clone(&server);
+        thread::spawn(move || {
+            handler(now_server, sock);
+        });
+    }
+
+    block_on(server.lock().unwrap().on_close());
+
+    Ok(())
+}
+
+fn start_server_sync<F, S>(
+    server: S,
+    host: &str,
+    timeout: Option<Duration>,
+    handler: F,
+) -> Result<(), Box<dyn Error>>
+where
+    F: (Fn(Arc<Mutex<S>>, TcpStream) -> ()) + Send + 'static + Copy,
+    S: HttpServer + Send + 'static,
 {
     let server = Arc::new(Mutex::new(server));
     let listener = TcpListener::bind(host)?;
@@ -675,46 +825,6 @@ where
     Ok(())
 }
 
-pub fn start_server(
-    server: impl HttpServer + Send + 'static,
-    host: &str,
-) -> Result<(), Box<dyn Error>> {
-    start_server_with_handler(server, host, None, move |server, sock| {
-        thread::spawn(move || handle_connection(server, sock));
-    })
-}
-
-// http rrs support
-pub fn start_server_rrs(
-    server: impl HttpServer + Send + 'static,
-    host: &str,
-) -> Result<(), Box<dyn Error>> {
-    start_server_with_handler(server, host, None, move |server, sock| {
-        thread::spawn(move || handle_connection_rrs(server, sock));
-    })
-}
-
-pub fn start_server_timeout(
-    server: impl HttpServer + Send + 'static,
-    host: &str,
-    timeout: Duration,
-) -> Result<(), Box<dyn Error>> {
-    start_server_with_handler(server, host, Some(timeout), move |server, sock| {
-        thread::spawn(move || handle_connection(server, sock));
-    })
-}
-
-// http rrs support
-pub fn start_server_rrs_timeout(
-    server: impl HttpServer + Send + 'static,
-    host: &str,
-    timeout: Duration,
-) -> Result<(), Box<dyn Error>> {
-    start_server_with_handler(server, host, Some(timeout), move |server, sock| {
-        thread::spawn(move || handle_connection_rrs(server, sock));
-    })
-}
-
 fn handle_connection<S: HttpServer + Send + 'static>(server: Arc<Mutex<S>>, mut sock: TcpStream) {
     let addr = sock.peer_addr().unwrap();
 
@@ -733,7 +843,6 @@ fn handle_connection<S: HttpServer + Send + 'static>(server: Arc<Mutex<S>>, mut 
     resp.write(&mut sock).unwrap();
 }
 
-// http rrs support
 fn handle_connection_rrs<S: HttpServer + Send + 'static>(
     server: Arc<Mutex<S>>,
     mut sock: TcpStream,
@@ -751,4 +860,59 @@ fn handle_connection_rrs<S: HttpServer + Send + 'static>(
         }
     };
     resp.write(&mut sock).unwrap();
+}
+
+type Job = Box<dyn FnOnce() + Send + 'static>;
+
+struct ThreadPool {
+    workers: Vec<Worker>,
+    sender: mpsc::Sender<Job>,
+}
+
+impl ThreadPool {
+    fn new(size: usize) -> ThreadPool {
+        assert!(size > 0);
+
+        let (sender, receiver) = mpsc::channel();
+        let receiver = Arc::new(Mutex::new(receiver));
+
+        let mut workers = Vec::with_capacity(size);
+
+        for _ in 0..size {
+            workers.push(Worker::new(Arc::clone(&receiver)));
+        }
+
+        ThreadPool { workers, sender }
+    }
+
+    fn join(self) {
+        for ele in self.workers.into_iter() {
+            ele.thread.join().unwrap();
+        }
+    }
+
+    fn execute<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let job = Box::new(f);
+
+        self.sender.send(job).unwrap();
+    }
+}
+
+struct Worker {
+    thread: thread::JoinHandle<()>,
+}
+
+impl Worker {
+    fn new(receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
+        let thread = thread::spawn(move || {
+            while let Ok(job) = receiver.lock().unwrap().recv() {
+                job();
+            }
+        });
+
+        Worker { thread }
+    }
 }
