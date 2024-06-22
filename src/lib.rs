@@ -712,7 +712,7 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
         let running = Arc::new(AtomicBool::new(true));
 
         if self.threads == 0 {
-            start_server(self.http_server, &self.host, self.timeout, handler, running)
+            start_server_new_thread(self.http_server, &self.host, self.timeout, handler, running)
         } else if self.threads == 1 {
             start_server_sync(self.http_server, &self.host, self.timeout, handler, running)
         } else {
@@ -743,7 +743,7 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
 
         let thread = if self.threads == 0 {
             thread::spawn(move || {
-                start_server(
+                start_server_new_thread(
                     self.http_server,
                     &self.host,
                     self.timeout,
@@ -827,7 +827,7 @@ where
     Ok(())
 }
 
-fn start_server<F, S>(
+fn start_server_new_thread<F, S>(
     server: S,
     host: &str,
     timeout: Option<Duration>,
@@ -999,4 +999,15 @@ impl Worker {
 
         Worker { thread }
     }
+}
+
+pub fn start_server<S: HttpServer + Send + 'static>(server: S, host: &str) {
+    start_server_new_thread(
+        server,
+        host,
+        None,
+        handle_connection,
+        Arc::new(AtomicBool::new(true)),
+    )
+    .unwrap();
 }

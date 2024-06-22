@@ -46,4 +46,6 @@ fn main() {
         .threads(5) // threadpool size
         .start_forever()
         .expect("http server error");
+
+    // ezhttp::start_server(site, host);
 }
