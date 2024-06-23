@@ -1,11 +1,13 @@
 use futures::executor::block_on;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::{
     boxed::Box,
     error::Error,
+    fmt::{Debug, Display},
     future::Future,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
     sync::Arc,
@@ -21,66 +23,74 @@ pub struct Headers {
     entries: Vec<(String, String)>,
 }
 
-impl Headers {
-    pub fn from_entries(entries: Vec<(String, String)>) -> Self {
-        Headers { entries }
+impl Into<HashMap<String, String>> for Headers {
+    fn into(self) -> HashMap<String, String> {
+        HashMap::from_iter(self.entries().into_iter())
     }
+}
 
-    pub fn from(entries: Vec<(&str, &str)>) -> Self {
+impl<T, U> From<Vec<(T, U)>> for Headers
+where
+    T: ToString,
+    U: ToString,
+{
+    fn from(value: Vec<(T, U)>) -> Self {
         Headers {
-            entries: entries
-                .iter()
+            entries: value
+                .into_iter()
                 .map(|v| (v.0.to_string(), v.1.to_string()))
                 .collect(),
         }
     }
+}
 
+impl Headers {
     pub fn new() -> Self {
         Headers {
             entries: Vec::new(),
         }
     }
 
-    pub fn contains_value(self, value: String) -> bool {
+    pub fn contains_value(self, value: impl ToString) -> bool {
         for (_, v) in self.entries {
-            if v == value {
+            if v == value.to_string() {
                 return true;
             }
         }
         return false;
     }
 
-    pub fn contains_key(self, key: String) -> bool {
+    pub fn contains_key(self, key: impl ToString) -> bool {
         for (k, _) in self.entries {
-            if k == key.to_lowercase() {
+            if k.to_lowercase() == key.to_string().to_lowercase() {
                 return true;
             }
         }
         return false;
     }
 
-    pub fn get(self, key: String) -> Option<String> {
+    pub fn get(self, key: impl ToString) -> Option<String> {
         for (k, v) in self.entries {
-            if k == key.to_lowercase() {
+            if k.to_lowercase() == key.to_string().to_lowercase() {
                 return Some(v);
             }
         }
         return None;
     }
 
-    pub fn put(&mut self, key: String, value: String) {
+    pub fn put(&mut self, key: impl ToString, value: String) {
         for t in self.entries.iter_mut() {
-            if t.0 == key.to_lowercase() {
+            if t.0.to_lowercase() == key.to_string().to_lowercase() {
                 t.1 = value;
                 return;
             }
         }
-        self.entries.push((key.to_lowercase(), value));
+        self.entries.push((key.to_string(), value));
     }
 
-    pub fn remove(&mut self, key: String) {
+    pub fn remove(&mut self, key: impl ToString) {
         for (i, t) in self.entries.iter_mut().enumerate() {
-            if t.0 == key.to_lowercase() {
+            if t.0.to_lowercase() == key.to_string().to_lowercase() {
                 self.entries.remove(i);
                 return;
             }
@@ -88,19 +98,11 @@ impl Headers {
     }
 
     pub fn keys(self) -> Vec<String> {
-        let mut keys = Vec::new();
-        for (k, _) in self.entries {
-            keys.push(k.to_lowercase());
-        }
-        keys
+        self.entries.iter().map(|e| e.0.clone()).collect()
     }
 
     pub fn values(self) -> Vec<String> {
-        let mut values = Vec::new();
-        for (_, v) in self.entries {
-            values.push(v);
-        }
-        values
+        self.entries.iter().map(|e| e.1.clone()).collect()
     }
 
     pub fn entries(self) -> Vec<(String, String)> {
@@ -116,9 +118,9 @@ impl Headers {
     }
 }
 
-impl std::fmt::Display for Headers {
+impl Display for Headers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(self, f)
+        Debug::fmt(self, f)
     }
 }
 
@@ -132,9 +134,9 @@ pub struct HttpRequest {
     pub data: Vec<u8>,
 }
 
-impl std::fmt::Display for HttpRequest {
+impl Display for HttpRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(self, f)
+        Debug::fmt(self, f)
     }
 }
 
@@ -145,9 +147,9 @@ pub struct HttpResponse {
     pub data: Vec<u8>,
 }
 
-impl std::fmt::Display for HttpResponse {
+impl Display for HttpResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(self, f)
+        Debug::fmt(self, f)
     }
 }
 
@@ -173,7 +175,7 @@ impl std::fmt::Display for HttpError {
 
 impl Error for HttpError {}
 
-fn read_line(data: &mut TcpStream) -> Result<String, HttpError> {
+fn read_line(data: &mut impl Read) -> Result<String, HttpError> {
     let mut bytes = Vec::new();
 
     for byte in data.bytes() {
@@ -195,14 +197,14 @@ fn read_line(data: &mut TcpStream) -> Result<String, HttpError> {
     }
 }
 
-fn read_line_crlf(data: &mut TcpStream) -> Result<String, HttpError> {
+fn read_line_crlf(data: &mut impl Read) -> Result<String, HttpError> {
     match read_line(data) {
         Ok(i) => Ok(i[..i.len() - 2].to_string()),
         Err(e) => Err(e),
     }
 }
 
-fn read_line_lf(data: &mut TcpStream) -> Result<String, HttpError> {
+fn read_line_lf(data: &mut impl Read) -> Result<String, HttpError> {
     match read_line(data) {
         Ok(i) => Ok(i[..i.len() - 1].to_string()),
         Err(e) => Err(e),
@@ -250,7 +252,7 @@ impl HttpRequest {
         }
     }
 
-    pub fn read(data: &mut TcpStream, addr: &SocketAddr) -> Result<HttpRequest, HttpError> {
+    pub fn read(data: &mut impl Read, addr: &SocketAddr) -> Result<HttpRequest, HttpError> {
         let octets = match addr.ip() {
             IpAddr::V4(ip) => ip.octets(),
             _ => [127, 0, 0, 1],
@@ -413,7 +415,7 @@ impl HttpRequest {
         })
     }
 
-    pub fn read_with_rrs(data: &mut TcpStream) -> Result<HttpRequest, HttpError> {
+    pub fn read_with_rrs(data: &mut impl Read) -> Result<HttpRequest, HttpError> {
         let addr = match read_line_lf(data) {
             Ok(i) => i,
             Err(e) => {
@@ -448,7 +450,7 @@ impl HttpRequest {
         self.page += query.as_str();
     }
 
-    pub fn write(self, data: &mut TcpStream) -> Result<(), HttpError> {
+    pub fn write(self, data: &mut impl Write) -> Result<(), HttpError> {
         let mut head: String = String::new();
         head.push_str(&self.method);
         head.push_str(" ");
@@ -482,27 +484,23 @@ impl HttpRequest {
 }
 
 impl HttpResponse {
-    pub fn new(headers: Headers, status_code: String, data: Vec<u8>) -> Self {
+    pub fn new() -> Self {
+        Self::from_bytes(Headers::new(), "200 OK", Vec::new())
+    }
+
+    pub fn from_bytes(headers: Headers, status_code: impl ToString, data: Vec<u8>) -> Self {
         HttpResponse {
             headers: headers,
             data: data,
-            status_code: status_code,
+            status_code: status_code.to_string(),
         }
     }
 
-    pub fn from_str(headers: Headers, status_code: String, data: &str) -> Self {
+    pub fn from_string(headers: Headers, status_code: impl ToString, data: impl ToString) -> Self {
         HttpResponse {
             headers: headers,
             data: data.to_string().into_bytes(),
-            status_code: status_code,
-        }
-    }
-
-    pub fn from_string(headers: Headers, status_code: String, data: String) -> Self {
-        HttpResponse {
-            headers: headers,
-            data: data.into_bytes(),
-            status_code: status_code,
+            status_code: status_code.to_string(),
         }
     }
 
@@ -520,7 +518,7 @@ impl HttpResponse {
         }
     }
 
-    pub fn read(data: &mut TcpStream) -> Result<HttpResponse, HttpError> {
+    pub fn read(data: &mut impl Read) -> Result<HttpResponse, HttpError> {
         let status = match read_line_crlf(data) {
             Ok(i) => i,
             Err(e) => {
@@ -600,7 +598,7 @@ impl HttpResponse {
         })
     }
 
-    pub fn write(self, data: &mut TcpStream) -> Result<(), &str> {
+    pub fn write(self, data: &mut impl Write) -> Result<(), &str> {
         let mut head: String = String::new();
         head.push_str("HTTP/1.1 ");
         head.push_str(&self.status_code);

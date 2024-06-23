@@ -1,5 +1,5 @@
 use ezhttp::{Headers, HttpRequest, HttpResponse, HttpServer, HttpServerStarter};
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 struct EzSite {
     index_page: String,
@@ -18,10 +18,10 @@ impl HttpServer for EzSite {
         println!("{} > {} {}", req.addr, req.method, req.page);
 
         if req.page == "/" {
-            Some(HttpResponse::from_str(
+            Some(HttpResponse::from_string(
                 Headers::from(vec![("Content-Type", "text/html")]), // response headers
-                "200 OK".to_string(),                               // response status code
-                &self.index_page,                                   // response body
+                "200 OK",                                           // response status code
+                self.index_page.clone(),                            // response body
             ))
         } else {
             None // close connection
