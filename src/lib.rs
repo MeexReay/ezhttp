@@ -18,6 +18,7 @@ use std::{
     sync::{mpsc, Mutex},
 };
 
+/// Http headers
 #[derive(Clone, Debug)]
 pub struct Headers {
     entries: Vec<(String, String)>,
@@ -51,18 +52,9 @@ impl Headers {
         }
     }
 
-    pub fn contains_value(self, value: impl ToString) -> bool {
-        for (_, v) in self.entries {
-            if v == value.to_string() {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    pub fn contains_key(self, key: impl ToString) -> bool {
+    pub fn contains(self, header: impl ToString) -> bool {
         for (k, _) in self.entries {
-            if k.to_lowercase() == key.to_string().to_lowercase() {
+            if k.to_lowercase() == header.to_string().to_lowercase() {
                 return true;
             }
         }
@@ -124,6 +116,7 @@ impl Display for Headers {
     }
 }
 
+/// Http request
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
     pub page: String,
@@ -140,6 +133,7 @@ impl Display for HttpRequest {
     }
 }
 
+/// Http response
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
     pub headers: Headers,
@@ -241,17 +235,19 @@ fn split(text: String, delimiter: &str, times: usize) -> Vec<String> {
 }
 
 impl HttpRequest {
+    /// Create new http request
     pub fn new(page: &str, method: &str, params: Value, headers: Headers, data: Vec<u8>) -> Self {
         HttpRequest {
             page: page.to_string(),
             method: method.to_string(),
             addr: String::new(),
-            params: params,
-            headers: headers,
-            data: data,
+            params,
+            headers,
+            data,
         }
     }
 
+    /// Read http request from stream
     pub fn read(data: &mut impl Read, addr: &SocketAddr) -> Result<HttpRequest, HttpError> {
         let octets = match addr.ip() {
             IpAddr::V4(ip) => ip.octets(),
@@ -406,15 +402,16 @@ impl HttpRequest {
         }
 
         Ok(HttpRequest {
-            page: page,
-            method: method,
+            page,
+            method,
             addr: ip_str.to_string(),
             params: Value::Object(params),
-            headers: headers,
+            headers,
             data: reqdata.clone(),
         })
     }
 
+    /// Read http request with http_rrs support
     pub fn read_with_rrs(data: &mut impl Read) -> Result<HttpRequest, HttpError> {
         let addr = match read_line_lf(data) {
             Ok(i) => i,
@@ -428,6 +425,7 @@ impl HttpRequest {
         HttpRequest::read(data, &addr)
     }
 
+    /// Set params to query in url
     pub fn params_to_page(&mut self) {
         let mut query = String::new();
 
@@ -450,6 +448,14 @@ impl HttpRequest {
         self.page += query.as_str();
     }
 
+    /// Set params to json data
+    pub fn params_to_json(&mut self) {
+        self.data = Vec::from(self.params.to_string().as_bytes());
+    }
+
+    /// Write http request to stream
+    ///
+    /// [`params`](Self::params) is not written to the stream, you need to use [`params_to_json`](Self::params_to_json) or [`params_to_page`](Self::params_to_page)
     pub fn write(self, data: &mut impl Write) -> Result<(), HttpError> {
         let mut head: String = String::new();
         head.push_str(&self.method);
@@ -484,26 +490,30 @@ impl HttpRequest {
 }
 
 impl HttpResponse {
+    /// Create new http response with empty headers and data and a 200 OK status code
     pub fn new() -> Self {
         Self::from_bytes(Headers::new(), "200 OK", Vec::new())
     }
 
+    /// Create new http response from headers, bytes data, and status code
     pub fn from_bytes(headers: Headers, status_code: impl ToString, data: Vec<u8>) -> Self {
         HttpResponse {
-            headers: headers,
-            data: data,
+            headers,
+            data,
             status_code: status_code.to_string(),
         }
     }
 
+    /// Create new http response from headers, string data, and status code
     pub fn from_string(headers: Headers, status_code: impl ToString, data: impl ToString) -> Self {
         HttpResponse {
-            headers: headers,
+            headers,
             data: data.to_string().into_bytes(),
             status_code: status_code.to_string(),
         }
     }
 
+    /// Get data in UTF-8
     pub fn get_text(self) -> String {
         match String::from_utf8(self.data) {
             Ok(i) => i,
@@ -511,6 +521,7 @@ impl HttpResponse {
         }
     }
 
+    /// Get json [`Value`](Value) from data
     pub fn get_json(self) -> Value {
         match serde_json::from_str(self.get_text().as_str()) {
             Ok(i) => i,
@@ -518,6 +529,7 @@ impl HttpResponse {
         }
     }
 
+    /// Read http response from stream
     pub fn read(data: &mut impl Read) -> Result<HttpResponse, HttpError> {
         let status = match read_line_crlf(data) {
             Ok(i) => i,
@@ -591,13 +603,10 @@ impl HttpResponse {
             }
         }
 
-        Ok(HttpResponse {
-            headers: headers,
-            status_code: status_code.to_string(),
-            data: reqdata,
-        })
+        Ok(HttpResponse::from_bytes(headers, status_code, reqdata))
     }
 
+    /// Write http response to stream
     pub fn write(self, data: &mut impl Write) -> Result<(), &str> {
         let mut head: String = String::new();
         head.push_str("HTTP/1.1 ");
@@ -627,6 +636,7 @@ impl HttpResponse {
     }
 }
 
+/// Async http server trait
 pub trait HttpServer {
     fn on_start(&mut self, host: &str) -> impl Future<Output = ()> + Send;
     fn on_close(&mut self) -> impl Future<Output = ()> + Send;
@@ -636,6 +646,7 @@ pub trait HttpServer {
     ) -> impl Future<Output = Option<HttpResponse>> + Send;
 }
 
+/// Http server start builder
 pub struct HttpServerStarter<T: HttpServer + Send + 'static> {
     http_server: T,
     support_http_rrs: bool,
@@ -644,6 +655,7 @@ pub struct HttpServerStarter<T: HttpServer + Send + 'static> {
     threads: usize,
 }
 
+/// Running http server
 pub struct RunningHttpServer {
     thread: thread::JoinHandle<()>,
     running: Arc<AtomicBool>,
@@ -654,6 +666,7 @@ impl RunningHttpServer {
         RunningHttpServer { thread, running }
     }
 
+    /// Stop http server
     pub fn close(self) {
         self.running.store(false, Ordering::Release);
         self.thread.join().unwrap();
@@ -661,6 +674,7 @@ impl RunningHttpServer {
 }
 
 impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
+    /// Create new HttpServerStarter
     pub fn new(http_server: T, host: &str) -> Self {
         HttpServerStarter {
             http_server,
@@ -671,31 +685,68 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
         }
     }
 
+    /// Set http server
     pub fn http_server(mut self, http_server: T) -> Self {
         self.http_server = http_server;
         return self;
     }
 
+    /// Set if http_rrs is supported
     pub fn support_http_rrs(mut self, support_http_rrs: bool) -> Self {
         self.support_http_rrs = support_http_rrs;
         return self;
     }
 
+    /// Set timeout for read & write
     pub fn timeout(mut self, timeout: Option<Duration>) -> Self {
         self.timeout = timeout;
         return self;
     }
 
+    /// Set host
     pub fn host(mut self, host: String) -> Self {
         self.host = host;
         return self;
     }
 
+    /// Set threads in threadpool and return builder
+    ///
+    /// 0 threads means that a new thread is created for each connection
+    /// 1 thread means that all connections are processed in the main thread
     pub fn threads(mut self, threads: usize) -> Self {
         self.threads = threads;
         return self;
     }
 
+    /// Get http server
+    pub fn get_http_server(self) -> T {
+        self.http_server
+    }
+
+    /// Get if http_rrs is supported
+    pub fn get_support_http_rrs(&self) -> bool {
+        self.support_http_rrs
+    }
+
+    /// Get timeout for read & write
+    pub fn get_timeout(&self) -> Option<Duration> {
+        self.timeout
+    }
+
+    /// Get host
+    pub fn get_host(&self) -> &str {
+        &self.host
+    }
+
+    /// Get threads in threadpool
+    ///
+    /// 0 threads means that a new thread is created for each connection
+    /// 1 thread means that all connections are processed in the main thread
+    pub fn get_threads(&self) -> usize {
+        self.threads
+    }
+
+    /// Start http server forever with options
     pub fn start_forever(self) -> Result<(), Box<dyn Error>> {
         let handler = if self.support_http_rrs {
             move |server, sock| {
@@ -725,6 +776,7 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
         }
     }
 
+    /// Start http server with options in new thread
     pub fn start(self) -> RunningHttpServer {
         let handler = if self.support_http_rrs {
             move |server, sock| {
@@ -999,6 +1051,9 @@ impl Worker {
     }
 }
 
+/// Start [`HttpServer`](HttpServer) on some host
+///
+/// Use [`HttpServerStarter`](HttpServerStarter) to set more options
 pub fn start_server<S: HttpServer + Send + 'static>(server: S, host: &str) {
     start_server_new_thread(
         server,

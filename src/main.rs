@@ -1,5 +1,5 @@
 use ezhttp::{Headers, HttpRequest, HttpResponse, HttpServer, HttpServerStarter};
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 
 struct EzSite {
     index_page: String,
