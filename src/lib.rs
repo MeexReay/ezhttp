@@ -1,22 +1,18 @@
 use futures::executor::block_on;
 use serde_json::Value;
-use std::collections::HashMap;
-use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 use std::{
     boxed::Box,
     error::Error,
     fmt::{Debug, Display},
     future::Future,
-    net::{IpAddr, SocketAddr, ToSocketAddrs},
-    sync::Arc,
+    net::{IpAddr, SocketAddr, ToSocketAddrs, TcpListener, TcpStream},
+    sync::{Arc, atomic::{AtomicBool, Ordering}, Mutex},
     thread,
+    io::{Read, Write},
+    time::Duration,
+    collections::HashMap
 };
-use std::{
-    net::{TcpListener, TcpStream},
-    sync::{mpsc, Mutex},
-};
+use threadpool::ThreadPool;
 
 /// Http headers
 #[derive(Clone, Debug)]
@@ -711,7 +707,7 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
 
     /// Set threads in threadpool and return builder
     ///
-    /// 0 threads means that a new thread is created for each connection
+    /// 0 threads means that a new thread is created for each connection \
     /// 1 thread means that all connections are processed in the main thread
     pub fn threads(mut self, threads: usize) -> Self {
         self.threads = threads;
@@ -740,7 +736,7 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
 
     /// Get threads in threadpool
     ///
-    /// 0 threads means that a new thread is created for each connection
+    /// 0 threads means that a new thread is created for each connection \
     /// 1 thread means that all connections are processed in the main thread
     pub fn get_threads(&self) -> usize {
         self.threads
@@ -850,8 +846,6 @@ where
     let host_clone = String::from(host).clone();
     let server_clone = server.clone();
     block_on(server_clone.lock().unwrap().on_start(&host_clone));
-
-    listener.set_nonblocking(true)?;
 
     while running.load(Ordering::Acquire) {
         let (sock, _) = match listener.accept() {
@@ -990,65 +984,6 @@ fn handle_connection_rrs<S: HttpServer + Send + 'static>(
         }
     };
     resp.write(&mut sock).unwrap();
-}
-
-type Job = Box<dyn FnOnce() + Send + 'static>;
-
-struct ThreadPool {
-    workers: Vec<Worker>,
-    sender: mpsc::Sender<Option<Job>>,
-}
-
-impl ThreadPool {
-    fn new(size: usize) -> ThreadPool {
-        assert!(size > 0);
-
-        let (sender, receiver) = mpsc::channel();
-        let receiver = Arc::new(Mutex::new(receiver));
-
-        let mut workers = Vec::with_capacity(size);
-
-        for _ in 0..size {
-            workers.push(Worker::new(Arc::clone(&receiver)));
-        }
-
-        ThreadPool { workers, sender }
-    }
-
-    fn join(self) {
-        for _ in 0..self.workers.len() {
-            self.sender.send(None).unwrap();
-        }
-
-        for ele in self.workers.into_iter() {
-            ele.thread.join().unwrap();
-        }
-    }
-
-    fn execute<F>(&self, f: F)
-    where
-        F: FnOnce() + Send + 'static,
-    {
-        let job = Box::new(f);
-
-        self.sender.send(Some(job)).unwrap();
-    }
-}
-
-struct Worker {
-    thread: thread::JoinHandle<()>,
-}
-
-impl Worker {
-    fn new(receiver: Arc<Mutex<mpsc::Receiver<Option<Job>>>>) -> Worker {
-        let thread = thread::spawn(move || {
-            while let Ok(Some(job)) = receiver.lock().unwrap().recv() {
-                job();
-            }
-        });
-
-        Worker { thread }
-    }
 }
 
 /// Start [`HttpServer`](HttpServer) on some host

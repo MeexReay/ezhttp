@@ -20,8 +20,8 @@ impl HttpServer for EzSite {
         if req.page == "/" {
             Some(HttpResponse::from_string(
                 Headers::from(vec![("Content-Type", "text/html")]), // response headers
-                "200 OK",                                           // response status code
-                self.index_page.clone(),                            // response body
+                "200 OK",                              // response status code
+                self.index_page.clone(),                      // response body
             ))
         } else {
             None // close connection
