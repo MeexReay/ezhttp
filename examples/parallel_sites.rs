@@ -21,9 +21,9 @@ impl HttpServer for EzSite {
         // println!("{} > {} {}", req.addr, req.method, req.page);
 
         if req.page == "/" {
-            Some(HttpResponse::from_str(
+            Some(HttpResponse::from_string(
                 Headers::from(vec![("Content-Type", "text/html")]), // response headers
-                "200 OK".to_string(),                               // response status code
+                "200 OK",                                           // response status code
                 &self.index_page,                                   // response body
             ))
         } else {
@@ -31,7 +31,7 @@ impl HttpServer for EzSite {
         }
     }
 
-    async fn on_start(&mut self, host: &str) {
+    async fn on_start(&mut self, _: &str) {
         // println!("Http server started on {}", host);
     }
 
