@@ -25,10 +25,10 @@ impl HttpServer for EzSite {
         println!("{} > {} {}", req.addr, req.method, req.page);
 
         if req.page == "/" {
-            Some(HttpResponse::from_str(
+            Some(HttpResponse::from_string(
                 Headers::from(vec![("Content-Type", "text/html")]), // response headers
-                "200 OK".to_string(),                               // response status code
-                &self.index_page,                                   // response body
+                "200 OK",                                           // response status code
+                self.index_page.clone(),                            // response body
             ))
         } else {
             None // close connection
@@ -44,7 +44,8 @@ impl HttpServer for EzSite {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let site = EzSite::new("Hello World!");
     let host = "localhost:8080";
 
@@ -52,7 +53,10 @@ fn main() {
         .timeout(Some(Duration::from_secs(5))) // read & write timeout
         .threads(5) // threadpool size
         .start_forever()
+        .await
         .expect("http server error");
+
+    // ezhttp::start_server(site, host);
 }
 ```
 
