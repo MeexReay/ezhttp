@@ -1,5 +1,7 @@
+use tokio::task::JoinHandle;
+
 use super::{
-    handle_connection, handle_connection_rrs, start_server_new_thread, start_server_sync,
+    start_server_new_thread, start_server_sync,
     start_server_with_threadpool, HttpServer,
 };
 
@@ -9,7 +11,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    thread,
     time::Duration,
 };
 
@@ -24,19 +25,19 @@ pub struct HttpServerStarter<T: HttpServer + Send + 'static> {
 
 /// Running http server
 pub struct RunningHttpServer {
-    thread: thread::JoinHandle<()>,
+    thread: JoinHandle<()>,
     running: Arc<AtomicBool>,
 }
 
 impl RunningHttpServer {
-    fn new(thread: thread::JoinHandle<()>, running: Arc<AtomicBool>) -> Self {
+    fn new(thread: JoinHandle<()>, running: Arc<AtomicBool>) -> Self {
         RunningHttpServer { thread, running }
     }
 
     /// Stop http server
-    pub fn close(self) {
+    pub fn close(&self) {
         self.running.store(false, Ordering::Release);
-        self.thread.join().unwrap();
+        self.thread.abort();
     }
 }
 
@@ -114,82 +115,62 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
     }
 
     /// Start http server forever with options
-    pub fn start_forever(self) -> Result<(), Box<dyn Error>> {
-        let handler = if self.support_http_rrs {
-            move |server, sock| {
-                handle_connection_rrs(server, sock);
-            }
-        } else {
-            move |server, sock| {
-                handle_connection(server, sock);
-            }
-        };
-
+    pub async fn start_forever(self) -> Result<(), Box<dyn Error>> {
         let running = Arc::new(AtomicBool::new(true));
 
         if self.threads == 0 {
-            start_server_new_thread(self.http_server, &self.host, self.timeout, handler, running)
+            start_server_new_thread(self.http_server, &self.host, self.timeout, self.support_http_rrs, running).await
         } else if self.threads == 1 {
-            start_server_sync(self.http_server, &self.host, self.timeout, handler, running)
+            start_server_sync(self.http_server, &self.host, self.timeout, self.support_http_rrs, running).await
         } else {
             start_server_with_threadpool(
                 self.http_server,
                 &self.host,
                 self.timeout,
                 self.threads,
-                handler,
+                self.support_http_rrs,
                 running,
-            )
+            ).await
         }
     }
 
     /// Start http server with options in new thread
     pub fn start(self) -> RunningHttpServer {
-        let handler = if self.support_http_rrs {
-            move |server, sock| {
-                handle_connection_rrs(server, sock);
-            }
-        } else {
-            move |server, sock| {
-                handle_connection(server, sock);
-            }
-        };
-
         let running = Arc::new(AtomicBool::new(true));
         let running_clone = running.clone();
 
         let thread = if self.threads == 0 {
-            thread::spawn(move || {
+            tokio::spawn(async move {
                 start_server_new_thread(
                     self.http_server,
                     &self.host,
                     self.timeout,
-                    handler,
+                    self.support_http_rrs,
                     running_clone,
-                )
+                ).await
                 .expect("http server error");
             })
         } else if self.threads == 1 {
-            thread::spawn(move || {
+            tokio::spawn(async move {
                 start_server_sync(
                     self.http_server,
                     &self.host,
                     self.timeout,
-                    handler,
+                    self.support_http_rrs,
                     running_clone,
-                )
+                ).await
                 .expect("http server error");
             })
         } else {
-            thread::spawn(move || {
+            tokio::spawn(async move {
                 start_server_with_threadpool(
                     self.http_server,
                     &self.host,
                     self.timeout,
                     self.threads,
-                    handler,
+                    self.support_http_rrs,
                     running_clone,
-                )
+                ).await
                 .expect("http server error")
             })
         };

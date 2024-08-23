@@ -1,4 +1,3 @@
-use futures::executor::block_on;
 use std::{
     boxed::Box,
     error::Error,
@@ -7,12 +6,10 @@ use std::{
     net::{TcpListener, TcpStream},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc,
     },
-    thread,
     time::Duration,
 };
-use threadpool::ThreadPool;
 
 pub mod error;
 pub mod headers;
@@ -24,7 +21,9 @@ pub use error::*;
 pub use headers::*;
 pub use request::*;
 pub use response::*;
+use rusty_pool::ThreadPool;
 pub use starter::*;
+use tokio::sync::Mutex;
 
 fn read_line(data: &mut impl Read) -> Result<String, HttpError> {
     let mut bytes = Vec::new();
@@ -101,25 +100,24 @@ pub trait HttpServer {
     ) -> impl Future<Output = Option<HttpResponse>> + Send;
 }
 
-fn start_server_with_threadpool<F, S>(
+async fn start_server_with_threadpool<S>(
     server: S,
     host: &str,
     timeout: Option<Duration>,
     threads: usize,
-    handler: F,
+    rrs: bool,
     running: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn Error>>
 where
-    F: (Fn(Arc<Mutex<S>>, TcpStream) -> ()) + Send + 'static + Copy,
     S: HttpServer + Send + 'static,
 {
-    let threadpool = ThreadPool::new(threads);
+    let threadpool = ThreadPool::new(threads, threads * 10, Duration::from_secs(60));
     let server = Arc::new(Mutex::new(server));
     let listener = TcpListener::bind(host)?;
 
     let host_clone = String::from(host).clone();
     let server_clone = server.clone();
-    block_on(server_clone.lock().unwrap().on_start(&host_clone));
+    server_clone.lock().await.on_start(&host_clone).await;
 
     while running.load(Ordering::Acquire) {
         let (sock, _) = match listener.accept() {
@@ -133,27 +131,29 @@ where
         sock.set_write_timeout(timeout).unwrap();
 
         let now_server = Arc::clone(&server);
-        threadpool.execute(move || {
-            handler(now_server, sock);
-        });
+
+        if !rrs {
+            threadpool.spawn(handle_connection(now_server, sock));
+        } else {
+            threadpool.spawn(handle_connection_rrs(now_server, sock));
+        }
     }
 
     threadpool.join();
 
-    block_on(server.lock().unwrap().on_close());
+    server.lock().await.on_close().await;
 
     Ok(())
 }
 
-fn start_server_new_thread<F, S>(
+async fn start_server_new_thread<S>(
     server: S,
     host: &str,
     timeout: Option<Duration>,
-    handler: F,
+    rrs: bool,
     running: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn Error>>
 where
-    F: (Fn(Arc<Mutex<S>>, TcpStream) -> ()) + Send + 'static + Copy,
     S: HttpServer + Send + 'static,
 {
     let server = Arc::new(Mutex::new(server));
@@ -161,7 +161,7 @@ where
 
     let host_clone = String::from(host).clone();
     let server_clone = server.clone();
-    block_on(server_clone.lock().unwrap().on_start(&host_clone));
+    server_clone.lock().await.on_start(&host_clone).await;
 
     while running.load(Ordering::Acquire) {
         let (sock, _) = match listener.accept() {
@@ -175,25 +175,27 @@ where
         sock.set_write_timeout(timeout).unwrap();
 
         let now_server = Arc::clone(&server);
-        thread::spawn(move || {
-            handler(now_server, sock);
-        });
+
+        if !rrs {
+            tokio::spawn(handle_connection(now_server, sock));
+        } else {
+            tokio::spawn(handle_connection_rrs(now_server, sock));
+        }
     }
 
-    block_on(server.lock().unwrap().on_close());
+    server.lock().await.on_close().await;
 
     Ok(())
 }
 
-fn start_server_sync<F, S>(
+async fn start_server_sync<S>(
     server: S,
     host: &str,
     timeout: Option<Duration>,
-    handler: F,
+    rrs: bool,
     running: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn Error>>
 where
-    F: (Fn(Arc<Mutex<S>>, TcpStream) -> ()) + Send + 'static + Copy,
     S: HttpServer + Send + 'static,
 {
     let server = Arc::new(Mutex::new(server));
@@ -201,7 +203,7 @@ where
 
     let host_clone = String::from(host).clone();
     let server_clone = server.clone();
-    block_on(server_clone.lock().unwrap().on_start(&host_clone));
+    server_clone.lock().await.on_start(&host_clone).await;
 
     while running.load(Ordering::Acquire) {
         let (sock, _) = match listener.accept() {
@@ -215,16 +217,24 @@ where
         sock.set_write_timeout(timeout).unwrap();
 
         let now_server = Arc::clone(&server);
-        handler(now_server, sock);
+
+        if !rrs {
+            handle_connection(now_server, sock).await;
+        } else {
+            handle_connection_rrs(now_server, sock).await;
+        }
     }
 
-    block_on(server.lock().unwrap().on_close());
+    server.lock().await.on_close().await;
 
     Ok(())
 }
 
-fn handle_connection<S: HttpServer + Send + 'static>(server: Arc<Mutex<S>>, mut sock: TcpStream) {
-    let addr = sock.peer_addr().unwrap();
+async fn handle_connection<S: HttpServer + Send + 'static>(
+    server: Arc<Mutex<S>>, 
+    mut sock: TcpStream
+) {
+    let Ok(addr) = sock.peer_addr() else { return; };
 
     let req = match HttpRequest::read(&mut sock, &addr) {
         Ok(i) => i,
@@ -232,16 +242,18 @@ fn handle_connection<S: HttpServer + Send + 'static>(server: Arc<Mutex<S>>, mut 
             return;
         }
     };
-    let resp = match block_on(server.lock().unwrap().on_request(&req)) {
+
+    let resp = match server.lock().await.on_request(&req).await {
         Some(i) => i,
         None => {
             return;
         }
     };
-    resp.write(&mut sock).unwrap();
+
+    let _ = resp.write(&mut sock);
 }
 
-fn handle_connection_rrs<S: HttpServer + Send + 'static>(
+async fn handle_connection_rrs<S: HttpServer + Send + 'static>(
     server: Arc<Mutex<S>>,
     mut sock: TcpStream,
 ) {
@@ -251,25 +263,27 @@ fn handle_connection_rrs<S: HttpServer + Send + 'static>(
             return;
         }
     };
-    let resp = match block_on(server.lock().unwrap().on_request(&req)) {
+    let resp = match server.lock().await.on_request(&req).await {
         Some(i) => i,
         None => {
             return;
         }
     };
-    resp.write(&mut sock).unwrap();
+    let _ = resp.write(&mut sock);
 }
 
 /// Start [`HttpServer`](HttpServer) on some host
 ///
 /// Use [`HttpServerStarter`](HttpServerStarter) to set more options
-pub fn start_server<S: HttpServer + Send + 'static>(server: S, host: &str) {
+pub async fn start_server<S: HttpServer + Send + 'static>(
+    server: S, 
+    host: &str
+) -> Result<(), Box<dyn Error>> {
     start_server_new_thread(
         server,
         host,
         None,
-        handle_connection,
+        false,
         Arc::new(AtomicBool::new(true)),
-    )
-    .unwrap();
+    ).await
 }

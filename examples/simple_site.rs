@@ -63,7 +63,8 @@ impl HttpServer for EzSite {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let site = EzSite::new("<h1>Hello World!</h1>");
     let host = "localhost:8080";
 
@@ -71,5 +72,6 @@ fn main() {
         .timeout(Some(Duration::from_secs(5)))
         .threads(5)
         .start_forever()
+        .await
         .expect("http server error");
 }
