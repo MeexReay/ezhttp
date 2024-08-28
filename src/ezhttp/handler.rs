@@ -42,13 +42,12 @@ pub async fn handler_connection<S: HttpServer + Send + 'static>(
     }
 }
 
+#[macro_export]
 macro_rules! pin_handler {
     ($handler: expr) => {
         Box::new(move |a, b| Box::pin($handler(a, b)))
     };
 }
-
-pub(crate) use pin_handler;
 
 #[cfg(feature = "http_rrs")]
 /// HTTP_RRS handler

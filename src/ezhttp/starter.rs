@@ -1,8 +1,9 @@
 use tokio::task::JoinHandle;
 
 use super::{
-    handler_connection, pin_handler, start_server_new_thread, start_server_sync, start_server_with_threadpool, Handler, HttpServer
+    handler_connection, start_server_new_thread, start_server_sync, start_server_with_threadpool, Handler, HttpServer
 };
+use crate::pin_handler;
 
 use std::{
     error::Error, sync::{
