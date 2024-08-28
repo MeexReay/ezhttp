@@ -1,11 +1,11 @@
-use super::{read_line_crlf, read_line_lf, rem_first, split, Headers, HttpError};
+use super::{read_line_crlf, Headers, HttpError};
 
 use serde_json::Value;
 use std::{
     fmt::{Debug, Display},
-    io::{Read, Write},
-    net::{IpAddr, SocketAddr, ToSocketAddrs},
+    net::SocketAddr,
 };
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Http request
 #[derive(Debug, Clone)]
@@ -38,39 +38,28 @@ impl HttpRequest {
     }
 
     /// Read http request from stream
-    pub fn read(data: &mut impl Read, addr: &SocketAddr) -> Result<HttpRequest, HttpError> {
-        let octets = match addr.ip() {
-            IpAddr::V4(ip) => ip.octets(),
-            _ => [127, 0, 0, 1],
-        };
+    pub async fn read(data: &mut (impl AsyncReadExt + Unpin), addr: &SocketAddr) -> Result<HttpRequest, HttpError> {
+        let ip_str = addr.to_string();
 
-        let ip_str = octets[0].to_string()
-            + "."
-            + &octets[1].to_string()
-            + "."
-            + &octets[2].to_string()
-            + "."
-            + &octets[3].to_string();
-
-        let status = split(
-            match read_line_crlf(data) {
-                Ok(i) => i,
-                Err(e) => return Err(e),
+        let status: Vec<String> = match read_line_crlf(data).await {
+            Ok(i) => {
+                i.splitn(3, " ")
+                    .map(|s| s.to_string())
+                    .collect()
             },
-            " ",
-            3,
-        );
+            Err(e) => return Err(e),
+        };
 
         let method = status[0].clone();
         let (page, query) = match status[1].split_once("?") {
             Some(i) => (i.0.to_string(), Some(i.1)),
-            None => (status[1].clone(), None),
+            None => (status[1].to_string(), None),
         };
 
         let mut headers = Headers::new();
 
         loop {
-            let text = match read_line_crlf(data) {
+            let text = match read_line_crlf(data).await {
                 Ok(i) => i,
                 Err(_) => return Err(HttpError::InvalidHeaders),
             };
@@ -121,7 +110,7 @@ impl HttpRequest {
                 let mut buf: Vec<u8> = Vec::new();
                 buf.resize(content_size - reqdata.len(), 0);
 
-                match data.read_exact(&mut buf) {
+                match data.read_exact(&mut buf).await {
                     Ok(i) => i,
                     Err(_) => return Err(HttpError::InvalidContent),
                 };
@@ -166,7 +155,7 @@ impl HttpRequest {
                 }
                 "application/x-www-form-urlencoded" => {
                     if body.starts_with("?") {
-                        body = rem_first(body.as_str()).to_string()
+                        body = body.as_str()[1..].to_string()
                     }
 
                     for ele in body.split("&") {
@@ -201,20 +190,6 @@ impl HttpRequest {
         })
     }
 
-    /// Read http request with http_rrs support
-    pub fn read_with_rrs(data: &mut impl Read) -> Result<HttpRequest, HttpError> {
-        let addr = match read_line_lf(data) {
-            Ok(i) => i,
-            Err(e) => {
-                return Err(e);
-            }
-        }
-        .to_socket_addrs()
-        .unwrap()
-        .collect::<Vec<SocketAddr>>()[0];
-        HttpRequest::read(data, &addr)
-    }
-
     /// Set params to query in url
     pub fn params_to_page(&mut self) {
         let mut query = String::new();
@@ -246,7 +221,7 @@ impl HttpRequest {
     /// Write http request to stream
     ///
     /// [`params`](Self::params) is not written to the stream, you need to use [`params_to_json`](Self::params_to_json) or [`params_to_page`](Self::params_to_page)
-    pub fn write(self, data: &mut impl Write) -> Result<(), HttpError> {
+    pub async fn write(self, data: &mut (impl AsyncWriteExt + Unpin)) -> Result<(), HttpError> {
         let mut head: String = String::new();
         head.push_str(&self.method);
         head.push_str(" ");
@@ -263,13 +238,13 @@ impl HttpRequest {
 
         head.push_str("\r\n");
 
-        match data.write_all(head.as_bytes()) {
+        match data.write_all(head.as_bytes()).await {
             Ok(i) => i,
             Err(_) => return Err(HttpError::WriteHeadError),
         };
 
         if !self.data.is_empty() {
-            match data.write_all(&self.data) {
+            match data.write_all(&self.data).await {
                 Ok(i) => i,
                 Err(_) => return Err(HttpError::WriteBodyError),
             };

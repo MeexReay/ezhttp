@@ -87,6 +87,7 @@ dependencies = [
  "rusty_pool",
  "serde_json",
  "tokio",
+ "tokio-io-timeout",
  "urlencoding",
 ]
 
@@ -374,9 +375,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.125"
+version = "1.0.127"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83c8e735a073ccf5be70aa8066aa984eaf2fa000db6c8d0100ae605b366d31ed"
+checksum = "8043c06d9f82bd7271361ed64f415fe5e12a77fdb52e573e7f06a516dea329ad"
 dependencies = [
  "itoa",
  "memchr",
@@ -451,6 +452,16 @@ dependencies = [
  "socket2",
  "tokio-macros",
  "windows-sys",
+]
+
+[[package]]
+name = "tokio-io-timeout"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30b74022ada614a1b4834de765f9bb43877f910cc8ce4be40e89042c9223a8bf"
+dependencies = [
+ "pin-project-lite",
+ "tokio",
 ]
 
 [[package]]

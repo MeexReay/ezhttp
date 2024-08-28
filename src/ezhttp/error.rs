@@ -13,6 +13,7 @@ pub enum HttpError {
     WriteHeadError,
     WriteBodyError,
     InvalidStatus,
+    RequstError
 }
 
 impl std::fmt::Display for HttpError {

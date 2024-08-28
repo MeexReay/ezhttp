@@ -1,27 +1,24 @@
 use tokio::task::JoinHandle;
+use tokio::sync::Mutex;
+use tokio::net::TcpStream;
+use tokio_io_timeout::TimeoutStream;
 
 use super::{
-    start_server_new_thread, start_server_sync,
-    start_server_with_threadpool, HttpServer,
+    start_server_new_thread, 
+    start_server_sync,
+    start_server_with_threadpool, 
+    handler_connection,
+    Handler,
+    HttpServer,
 };
 
+use std::pin::Pin;
 use std::{
-    error::Error,
-    sync::{
+    error::Error, future::Future, sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    },
-    time::Duration,
+    }, time::Duration
 };
-
-/// Http server start builder
-pub struct HttpServerStarter<T: HttpServer + Send + 'static> {
-    http_server: T,
-    support_http_rrs: bool,
-    timeout: Option<Duration>,
-    host: String,
-    threads: usize,
-}
 
 /// Running http server
 pub struct RunningHttpServer {
@@ -41,12 +38,21 @@ impl RunningHttpServer {
     }
 }
 
+/// Http server start builder
+pub struct HttpServerStarter<T: HttpServer + Send + 'static> {
+    http_server: T,
+    handler: Handler<T>,
+    timeout: Option<Duration>,
+    host: String,
+    threads: usize,
+}
+
 impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
     /// Create new HttpServerStarter
     pub fn new(http_server: T, host: &str) -> Self {
         HttpServerStarter {
             http_server,
-            support_http_rrs: false,
+            handler: Box::new(move |a, b| Box::pin(handler_connection(a, b))),
             timeout: None,
             host: host.to_string(),
             threads: 0,
@@ -56,25 +62,25 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
     /// Set http server
     pub fn http_server(mut self, http_server: T) -> Self {
         self.http_server = http_server;
-        return self;
+        self
     }
 
     /// Set if http_rrs is supported
-    pub fn support_http_rrs(mut self, support_http_rrs: bool) -> Self {
-        self.support_http_rrs = support_http_rrs;
-        return self;
+    pub fn handler(mut self, handler: impl Fn(Arc<Mutex<T>>, TimeoutStream<TcpStream>) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static) -> Self {
+        self.handler = Box::new(move |a, b| Box::pin(handler(a, b)));
+        self
     }
 
     /// Set timeout for read & write
     pub fn timeout(mut self, timeout: Option<Duration>) -> Self {
         self.timeout = timeout;
-        return self;
+        self
     }
 
     /// Set host
     pub fn host(mut self, host: String) -> Self {
         self.host = host;
-        return self;
+        self
     }
 
     /// Set threads in threadpool and return builder
@@ -83,17 +89,17 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
     /// 1 thread means that all connections are processed in the main thread
     pub fn threads(mut self, threads: usize) -> Self {
         self.threads = threads;
-        return self;
+        self
     }
 
     /// Get http server
-    pub fn get_http_server(self) -> T {
-        self.http_server
+    pub fn get_http_server(&self) -> &T {
+        &self.http_server
     }
 
     /// Get if http_rrs is supported
-    pub fn get_support_http_rrs(&self) -> bool {
-        self.support_http_rrs
+    pub fn get_handler(&self) -> &Handler<T> {
+        &self.handler
     }
 
     /// Get timeout for read & write
@@ -109,7 +115,7 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
     /// Get threads in threadpool
     ///
     /// 0 threads means that a new thread is created for each connection \
-    /// 1 thread means that all connections are processed in the main thread
+    /// 1 thread means that all connections are processed in the one thread
     pub fn get_threads(&self) -> usize {
         self.threads
     }
@@ -119,16 +125,16 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
         let running = Arc::new(AtomicBool::new(true));
 
         if self.threads == 0 {
-            start_server_new_thread(self.http_server, &self.host, self.timeout, self.support_http_rrs, running).await
+            start_server_new_thread(self.http_server, &self.host, self.timeout, self.handler, running).await
         } else if self.threads == 1 {
-            start_server_sync(self.http_server, &self.host, self.timeout, self.support_http_rrs, running).await
+            start_server_sync(self.http_server, &self.host, self.timeout, self.handler, running).await
         } else {
             start_server_with_threadpool(
                 self.http_server,
                 &self.host,
                 self.timeout,
                 self.threads,
-                self.support_http_rrs,
+                self.handler,
                 running,
             ).await
         }
@@ -145,7 +151,7 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
                     self.http_server,
                     &self.host,
                     self.timeout,
-                    self.support_http_rrs,
+                    self.handler,
                     running_clone,
                 ).await
                 .expect("http server error");
@@ -156,7 +162,7 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
                     self.http_server,
                     &self.host,
                     self.timeout,
-                    self.support_http_rrs,
+                    self.handler,
                     running_clone,
                 ).await
                 .expect("http server error");
@@ -168,7 +174,7 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
                     &self.host,
                     self.timeout,
                     self.threads,
-                    self.support_http_rrs,
+                    self.handler,
                     running_clone,
                 ).await
                 .expect("http server error")

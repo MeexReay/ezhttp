@@ -1,10 +1,8 @@
 use super::{read_line_crlf, Headers, HttpError};
 
 use serde_json::Value;
-use std::{
-    fmt::{Debug, Display},
-    io::{Read, Write},
-};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::fmt::{Debug, Display};
 
 /// Http response
 #[derive(Debug, Clone)]
@@ -61,8 +59,8 @@ impl HttpResponse {
     }
 
     /// Read http response from stream
-    pub fn read(data: &mut impl Read) -> Result<HttpResponse, HttpError> {
-        let status = match read_line_crlf(data) {
+    pub async fn read(data: &mut (impl AsyncReadExt + Unpin)) -> Result<HttpResponse, HttpError> {
+        let status = match read_line_crlf(data).await {
             Ok(i) => i,
             Err(e) => {
                 return Err(e);
@@ -77,7 +75,7 @@ impl HttpResponse {
         let mut headers = Headers::new();
 
         loop {
-            let text = match read_line_crlf(data) {
+            let text = match read_line_crlf(data).await {
                 Ok(i) => i,
                 Err(_) => return Err(HttpError::InvalidHeaders),
             };
@@ -106,7 +104,7 @@ impl HttpResponse {
                 let mut buf: Vec<u8> = Vec::new();
                 buf.resize(content_size - reqdata.len(), 0);
 
-                match data.read_exact(&mut buf) {
+                match data.read_exact(&mut buf).await {
                     Ok(i) => i,
                     Err(_) => return Err(HttpError::InvalidContent),
                 };
@@ -117,7 +115,7 @@ impl HttpResponse {
             loop {
                 let mut buf: Vec<u8> = vec![0; 1024 * 32];
 
-                let buf_len = match data.read(&mut buf) {
+                let buf_len = match data.read(&mut buf).await {
                     Ok(i) => i,
                     Err(_) => {
                         break;
@@ -138,7 +136,7 @@ impl HttpResponse {
     }
 
     /// Write http response to stream
-    pub fn write(self, data: &mut impl Write) -> Result<(), &str> {
+    pub async fn write(self, data: &mut (impl AsyncWriteExt + Unpin)) -> Result<(), HttpError> {
         let mut head: String = String::new();
         head.push_str("HTTP/1.1 ");
         head.push_str(&self.status_code);
@@ -153,14 +151,14 @@ impl HttpResponse {
 
         head.push_str("\r\n");
 
-        match data.write_all(head.as_bytes()) {
+        match data.write_all(head.as_bytes()).await {
             Ok(i) => i,
-            Err(_) => return Err("write head error"),
+            Err(_) => return Err(HttpError::WriteHeadError),
         };
 
-        match data.write_all(&self.data) {
+        match data.write_all(&self.data).await {
             Ok(i) => i,
-            Err(_) => return Err("write body error"),
+            Err(_) => return Err(HttpError::WriteHeadError),
         };
 
         Ok(())
