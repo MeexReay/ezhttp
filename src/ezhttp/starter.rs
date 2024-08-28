@@ -1,20 +1,11 @@
 use tokio::task::JoinHandle;
-use tokio::sync::Mutex;
-use tokio::net::TcpStream;
-use tokio_io_timeout::TimeoutStream;
 
 use super::{
-    start_server_new_thread, 
-    start_server_sync,
-    start_server_with_threadpool, 
-    handler_connection,
-    Handler,
-    HttpServer,
+    handler_connection, pin_handler, start_server_new_thread, start_server_sync, start_server_with_threadpool, Handler, HttpServer
 };
 
-use std::pin::Pin;
 use std::{
-    error::Error, future::Future, sync::{
+    error::Error, sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     }, time::Duration
@@ -52,7 +43,7 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
     pub fn new(http_server: T, host: &str) -> Self {
         HttpServerStarter {
             http_server,
-            handler: Box::new(move |a, b| Box::pin(handler_connection(a, b))),
+            handler: pin_handler!(handler_connection),
             timeout: None,
             host: host.to_string(),
             threads: 0,
@@ -66,8 +57,8 @@ impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
     }
 
     /// Set if http_rrs is supported
-    pub fn handler(mut self, handler: impl Fn(Arc<Mutex<T>>, TimeoutStream<TcpStream>) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static) -> Self {
-        self.handler = Box::new(move |a, b| Box::pin(handler(a, b)));
+    pub fn handler(mut self, handler: Handler<T>) -> Self {
+        self.handler = handler;
         self
     }
 

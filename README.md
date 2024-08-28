@@ -3,7 +3,19 @@ Easy http server for small sites
 
 This library is under developement, so if you found any bugs, please write them to [Issues](https://github.com/MeexReay/ezhttp/issues)
 
-Example:
+## Setup
+
+```toml
+ezhttp = "0.1.6" # stable
+ezhttp = { git = "https://github.com/MeexReay/ezhttp" } # unstable
+```
+
+Features:
+- http_rrs (adds handler_http_rrs)
+
+## Examples
+
+Hello world example:
 ```rust
 use ezhttp::{Headers, HttpRequest, HttpResponse, HttpServer, HttpServerStarter};
 use std::time::Duration;

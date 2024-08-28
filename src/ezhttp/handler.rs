@@ -9,7 +9,6 @@ use {super::read_line_lf, std::net::{ToSocketAddrs, SocketAddr}};
 
 pub type Handler<T> = Box<dyn Fn(Arc<Mutex<T>>, TimeoutStream<TcpStream>) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
-
 /// Default connection handler
 /// Turns input to request and response to output
 pub async fn handler_connection<S: HttpServer + Send + 'static>(
@@ -42,6 +41,14 @@ pub async fn handler_connection<S: HttpServer + Send + 'static>(
         },
     }
 }
+
+macro_rules! pin_handler {
+    ($handler: expr) => {
+        Box::new(move |a, b| Box::pin($handler(a, b)))
+    };
+}
+
+pub(crate) use pin_handler;
 
 #[cfg(feature = "http_rrs")]
 /// HTTP_RRS handler
