@@ -61,3 +61,10 @@ async fn main() {
 ```
 
 [More examples](https://github.com/MeexReay/ezhttp/blob/main/examples)
+
+### Contributing
+
+If you would like to contribute to the project, feel free to fork the repository and submit a pull request.
+
+### License
+This project is licensed under the WTFPL License
