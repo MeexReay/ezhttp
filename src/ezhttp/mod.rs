@@ -10,7 +10,6 @@ use std::{
 use tokio::io::AsyncReadExt;
 use rusty_pool::ThreadPool;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::RwLock;
 use tokio_io_timeout::TimeoutStream;
 
 pub mod error;
@@ -63,20 +62,14 @@ pub type Stream = TimeoutStream<TcpStream>;
 
 /// Async http server trait
 pub trait HttpServer {
-    fn on_start(&mut self, host: &str) -> impl Future<Output = ()> + Send;
-    fn on_close(&mut self) -> impl Future<Output = ()> + Send;
+    fn on_start(&self, host: &str) -> impl Future<Output = ()> + Send;
+    fn on_close(&self) -> impl Future<Output = ()> + Send;
     fn on_request(
         &self,
         req: &HttpRequest,
     ) -> impl Future<Output = Option<HttpResponse>> + Send;
-    fn on_request_mut(
-        &mut self,
-        _: &HttpRequest,
-    ) -> impl Future<Output = Option<HttpResponse>> + Send {
-        async { None }
-    }
     fn on_error(
-        &mut self, 
+        &self, 
         _: HttpError
     ) -> impl Future<Output = ()> + Send {
         async {}
@@ -95,12 +88,12 @@ where
     T: HttpServer + Send + 'static,
 {
     let threadpool = ThreadPool::new(threads, threads * 10, Duration::from_secs(60));
-    let server = Arc::new(RwLock::new(server));
+    let server = Arc::new(server);
     let listener = TcpListener::bind(host).await?;
 
     let host_clone = String::from(host).clone();
     let server_clone = server.clone();
-    server_clone.write().await.on_start(&host_clone).await;
+    server_clone.on_start(&host_clone).await;
 
     while running.load(Ordering::Acquire) {
         let Ok((sock, _)) = listener.accept().await else { continue; };
@@ -116,7 +109,7 @@ where
 
     threadpool.join();
 
-    server.write().await.on_close().await;
+    server.on_close().await;
 
     Ok(())
 }
@@ -131,12 +124,12 @@ async fn start_server_new_thread<T>(
 where
     T: HttpServer + Send + 'static,
 {
-    let server = Arc::new(RwLock::new(server));
+    let server = Arc::new(server);
     let listener = TcpListener::bind(host).await?;
 
     let host_clone = String::from(host).clone();
     let server_clone = server.clone();
-    server_clone.write().await.on_start(&host_clone).await;
+    server_clone.on_start(&host_clone).await;
 
     while running.load(Ordering::Acquire) {
         let Ok((sock, _)) = listener.accept().await else { continue; };
@@ -150,7 +143,7 @@ where
         tokio::spawn((&handler)(now_server, sock));
     }
 
-    server.write().await.on_close().await;
+    server.on_close().await;
 
     Ok(())
 }
@@ -165,12 +158,12 @@ async fn start_server_sync<T>(
 where
     T: HttpServer + Send + 'static,
 {
-    let server = Arc::new(RwLock::new(server));
+    let server = Arc::new(server);
     let listener = TcpListener::bind(host).await?;
 
     let host_clone = String::from(host).clone();
     let server_clone = server.clone();
-    server_clone.write().await.on_start(&host_clone).await;
+    server_clone.on_start(&host_clone).await;
 
     while running.load(Ordering::Acquire) {
         let Ok((sock, _)) = listener.accept().await else { continue; };
@@ -184,7 +177,7 @@ where
         handler(now_server, sock).await;
     }
 
-    server.write().await.on_close().await;
+    server.on_close().await;
 
     Ok(())
 }

@@ -54,11 +54,11 @@ impl HttpServer for EzSite {
         }
     }
 
-    async fn on_start(&mut self, host: &str) {
+    async fn on_start(&self, host: &str) {
         println!("Http server started on {}", host);
     }
 
-    async fn on_close(&mut self) {
+    async fn on_close(&self) {
         println!("Http server closed");
     }
 }
