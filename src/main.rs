@@ -14,7 +14,7 @@ impl EzSite {
 }
 
 impl HttpServer for EzSite {
-    async fn on_request(&mut self, req: &HttpRequest) -> Option<HttpResponse> {
+    async fn on_request(&self, req: &HttpRequest) -> Option<HttpResponse> {
         println!("{} > {} {}", req.addr, req.method, req.page);
 
         if req.page == "/" {

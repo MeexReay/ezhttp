@@ -12,7 +12,7 @@ impl EzSite {
         }
     }
 
-    fn ok_response(&mut self, content: String) -> HttpResponse {
+    fn ok_response(&self, content: String) -> HttpResponse {
         HttpResponse::from_string(
             Headers::from(vec![("Content-Type", "text/html")]),
             "200 OK".to_string(),
@@ -20,7 +20,7 @@ impl EzSite {
         )
     }
 
-    fn not_found_response(&mut self, content: String) -> HttpResponse {
+    fn not_found_response(&self, content: String) -> HttpResponse {
         HttpResponse::from_string(
             Headers::from(vec![("Content-Type", "text/html")]),
             "404 Not Found".to_string(),
@@ -28,7 +28,7 @@ impl EzSite {
         )
     }
 
-    async fn get_main_page(&mut self, req: &HttpRequest) -> Option<HttpResponse> {
+    async fn get_main_page(&self, req: &HttpRequest) -> Option<HttpResponse> {
         if req.page == "/" {
             Some(self.ok_response(self.main_page.clone()))
         } else {
@@ -36,13 +36,13 @@ impl EzSite {
         }
     }
 
-    async fn get_unknown_page(&mut self, req: &HttpRequest) -> Option<HttpResponse> {
+    async fn get_unknown_page(&self, req: &HttpRequest) -> Option<HttpResponse> {
         Some(self.not_found_response(format!("<h1>404 Error</h1>Not Found {}", &req.page)))
     }
 }
 
 impl HttpServer for EzSite {
-    async fn on_request(&mut self, req: &HttpRequest) -> Option<HttpResponse> {
+    async fn on_request(&self, req: &HttpRequest) -> Option<HttpResponse> {
         println!("{} > {} {}", req.addr, req.method, req.page);
 
         if let Some(resp) = self.get_main_page(req).await {

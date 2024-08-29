@@ -39,7 +39,7 @@ pub struct HttpServerStarter<T: HttpServer + Send + 'static> {
     threads: usize,
 }
 
-impl<T: HttpServer + Send + 'static> HttpServerStarter<T> {
+impl<T: HttpServer + Send + 'static + Sync> HttpServerStarter<T> {
     /// Create new HttpServerStarter
     pub fn new(http_server: T, host: &str) -> Self {
         HttpServerStarter {
