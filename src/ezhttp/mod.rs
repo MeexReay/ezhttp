@@ -110,9 +110,7 @@ where
 
         let handler_clone = handler.clone();
 
-        threadpool.execute(move || {
-            tokio::spawn((&handler_clone.get().unwrap())(now_server, sock));
-        });
+        tokio::spawn((&handler_clone.get().unwrap())(now_server, sock));
     }
 
     threadpool.join();
