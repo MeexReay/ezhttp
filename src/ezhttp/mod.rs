@@ -94,7 +94,8 @@ where
     let server = Arc::new(server);
     let listener = TcpListener::bind(host).await?;
     let handler = Arc::new(OnceCell::new_with(Some(handler)));
-    
+    let rt = Arc::new(Runtime::new().unwrap());
+
     let host_clone = String::from(host).clone();
     let server_clone = server.clone();
     server_clone.on_start(&host_clone).await;
@@ -109,8 +110,10 @@ where
         let now_server = Arc::clone(&server);
 
         let handler_clone = handler.clone();
+        let runtime = rt.clone();
+
         threadpool.execute(move || {
-            Runtime::new().unwrap().spawn((&handler_clone.get().unwrap())(now_server, sock));
+            runtime.block_on((&handler_clone.get().unwrap())(now_server, sock));
         });
     }
 
