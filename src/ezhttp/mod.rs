@@ -109,7 +109,9 @@ where
         let now_server = Arc::clone(&server);
 
         let handler_clone = handler.clone();
-        threadpool.execute(move || {Runtime::new().unwrap().block_on((&handler_clone.get().unwrap())(now_server, sock))});
+        threadpool.execute(move || {
+            Runtime::new().unwrap().spawn((&handler_clone.get().unwrap())(now_server, sock));
+        });
     }
 
     threadpool.join();
