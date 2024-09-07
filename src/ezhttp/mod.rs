@@ -8,9 +8,10 @@ use std::{
 };
 
 use tokio::io::AsyncReadExt;
-use rusty_pool::ThreadPool;
+use threadpool::ThreadPool;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::Runtime;
+use tokio::sync::OnceCell;
 use tokio_io_timeout::TimeoutStream;
 
 pub mod error;
@@ -86,12 +87,14 @@ async fn start_server_with_threadpool<T>(
     running: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn Error>>
 where
-    T: HttpServer + Send + 'static,
+    T: HttpServer + Send + 'static + Sync,
 {
-    let threadpool = ThreadPool::new(threads, threads * 10, Duration::from_secs(60));
+    let threadpool = ThreadPool::new(threads);
+
     let server = Arc::new(server);
     let listener = TcpListener::bind(host).await?;
-
+    let handler = Arc::new(OnceCell::new_with(Some(handler)));
+    
     let host_clone = String::from(host).clone();
     let server_clone = server.clone();
     server_clone.on_start(&host_clone).await;
@@ -105,7 +108,8 @@ where
 
         let now_server = Arc::clone(&server);
 
-        threadpool.spawn_await((&handler)(now_server, sock));
+        let handler_clone = handler.clone();
+        threadpool.execute(move || {Runtime::new().unwrap().block_on((&handler_clone.get().unwrap())(now_server, sock))});
     }
 
     threadpool.join();
@@ -141,7 +145,7 @@ where
 
         let now_server = Arc::clone(&server);
 
-        Runtime::new().unwrap().spawn((&handler)(now_server, sock));
+        tokio::spawn((&handler)(now_server, sock));
     }
 
     server.on_close().await;

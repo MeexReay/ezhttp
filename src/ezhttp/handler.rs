@@ -39,6 +39,7 @@ pub async fn handler_connection<S: HttpServer + Send + 'static + Sync>(
             return;
         },
     }
+
 }
 
 #[macro_export]
