@@ -10,6 +10,7 @@ use std::{
 use tokio::io::AsyncReadExt;
 use rusty_pool::ThreadPool;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::runtime::Runtime;
 use tokio_io_timeout::TimeoutStream;
 
 pub mod error;
@@ -104,7 +105,7 @@ where
 
         let now_server = Arc::clone(&server);
 
-        threadpool.spawn((&handler)(now_server, sock));
+        threadpool.spawn_await((&handler)(now_server, sock));
     }
 
     threadpool.join();
@@ -140,7 +141,7 @@ where
 
         let now_server = Arc::clone(&server);
 
-        tokio::spawn((&handler)(now_server, sock));
+        Runtime::new().unwrap().spawn((&handler)(now_server, sock));
     }
 
     server.on_close().await;

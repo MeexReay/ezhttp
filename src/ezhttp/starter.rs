@@ -1,4 +1,4 @@
-use tokio::task::JoinHandle;
+use tokio::{runtime::Runtime, task::JoinHandle};
 
 use super::{
     handler_connection, start_server_new_thread, start_server_sync, start_server_with_threadpool, Handler, HttpServer
@@ -138,7 +138,7 @@ impl<T: HttpServer + Send + 'static + Sync> HttpServerStarter<T> {
         let running_clone = running.clone();
 
         let thread = if self.threads == 0 {
-            tokio::spawn(async move {
+            Runtime::new().unwrap().spawn(async move {
                 start_server_new_thread(
                     self.http_server,
                     &self.host,
@@ -149,7 +149,7 @@ impl<T: HttpServer + Send + 'static + Sync> HttpServerStarter<T> {
                 .expect("http server error");
             })
         } else if self.threads == 1 {
-            tokio::spawn(async move {
+            Runtime::new().unwrap().spawn(async move {
                 start_server_sync(
                     self.http_server,
                     &self.host,
@@ -160,7 +160,7 @@ impl<T: HttpServer + Send + 'static + Sync> HttpServerStarter<T> {
                 .expect("http server error");
             })
         } else {
-            tokio::spawn(async move {
+            Runtime::new().unwrap().spawn(async move {
                 start_server_with_threadpool(
                     self.http_server,
                     &self.host,
