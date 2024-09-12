@@ -66,7 +66,7 @@ pub async fn handler_http_rrs<S: HttpServer + Send + 'static + Sync>(
     .unwrap()
     .collect::<Vec<SocketAddr>>()[0];
 
-    dbg!(addr);
+    dbg!(&addr);
 
     let req = match HttpRequest::read(sock.get_mut(), &addr).await {
         Ok(i) => i,
@@ -76,7 +76,7 @@ pub async fn handler_http_rrs<S: HttpServer + Send + 'static + Sync>(
         }
     };
 
-    dbg!(req);
+    dbg!(&req);
 
     let resp = match server.on_request(&req).await {
         Some(i) => i,
