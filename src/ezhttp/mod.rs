@@ -11,7 +11,6 @@ use tokio::io::AsyncReadExt;
 use threadpool::ThreadPool;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::Runtime;
-use tokio::sync::OnceCell;
 use tokio_io_timeout::TimeoutStream;
 
 pub mod error;
@@ -93,7 +92,10 @@ where
 
     let server = Arc::new(server);
     let listener = TcpListener::bind(host).await?;
-    let handler = Arc::new(OnceCell::new_with(Some(handler)));
+    let old_handler = handler;
+    let handler = Arc::new(move |now_server, sock| { 
+        Runtime::new().unwrap().block_on(old_handler(now_server, sock)); 
+    });
 
     let host_clone = String::from(host).clone();
     let server_clone = server.clone();
@@ -107,10 +109,11 @@ where
         sock.set_write_timeout(timeout);
 
         let now_server = Arc::clone(&server);
+        let now_handler = Arc::clone(&handler);
 
-        let handler_clone = handler.clone();
-
-        tokio::spawn((&handler_clone.get().unwrap())(now_server, sock));
+        threadpool.execute(move || {
+            (now_handler)(now_server, sock);
+        });
     }
 
     threadpool.join();
