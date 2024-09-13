@@ -4,7 +4,7 @@ use std::{future::Future, pin::Pin, sync::Arc};
 use tokio::net::TcpStream;
 use tokio_io_timeout::TimeoutStream;
 
-#[cfg(feature = "http_rrs")]
+#[cfg(feature = "flowgate")]
 use {super::read_line_lf, std::net::{ToSocketAddrs, SocketAddr}};
 
 pub type Handler<T> = Box<dyn Fn(Arc<T>, TimeoutStream<TcpStream>) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
@@ -49,9 +49,9 @@ macro_rules! pin_handler {
     };
 }
 
-#[cfg(feature = "http_rrs")]
-/// HTTP_RRS handler
-pub async fn handler_http_rrs<S: HttpServer + Send + 'static + Sync>(
+#[cfg(feature = "flowgate")]
+/// Flowgate handler
+pub async fn handler_flowgate<S: HttpServer + Send + 'static + Sync>(
     server: Arc<S>,
     mut sock: Stream,
 ) {

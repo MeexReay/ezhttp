@@ -51,7 +51,6 @@ async fn read_line_crlf(data: &mut (impl AsyncReadExt + Unpin)) -> Result<String
     }
 }
 
-#[cfg(feature = "http_rrs")]
 async fn read_line_lf(data: &mut (impl AsyncReadExt + Unpin)) -> Result<String, HttpError> {
     match read_line(data).await {
         Ok(i) => Ok(i[..i.len() - 1].to_string()),

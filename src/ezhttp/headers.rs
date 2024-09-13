@@ -37,8 +37,8 @@ impl Headers {
         }
     }
 
-    pub fn contains(self, header: impl ToString) -> bool {
-        for (k, _) in self.entries {
+    pub fn contains(&self, header: impl ToString) -> bool {
+        for (k, _) in &self.entries {
             if k.to_lowercase() == header.to_string().to_lowercase() {
                 return true;
             }
@@ -46,10 +46,10 @@ impl Headers {
         return false;
     }
 
-    pub fn get(self, key: impl ToString) -> Option<String> {
-        for (k, v) in self.entries {
+    pub fn get(&self, key: impl ToString) -> Option<String> {
+        for (k, v) in &self.entries {
             if k.to_lowercase() == key.to_string().to_lowercase() {
-                return Some(v);
+                return Some(v.clone());
             }
         }
         return None;
@@ -74,19 +74,19 @@ impl Headers {
         }
     }
 
-    pub fn keys(self) -> Vec<String> {
+    pub fn keys(&self) -> Vec<String> {
         self.entries.iter().map(|e| e.0.clone()).collect()
     }
 
-    pub fn values(self) -> Vec<String> {
+    pub fn values(&self) -> Vec<String> {
         self.entries.iter().map(|e| e.1.clone()).collect()
     }
 
-    pub fn entries(self) -> Vec<(String, String)> {
-        return self.entries;
+    pub fn entries(&self) -> Vec<(String, String)> {
+        return self.entries.clone();
     }
 
-    pub fn len(self) -> usize {
+    pub fn len(&self) -> usize {
         return self.entries.len();
     }
 
