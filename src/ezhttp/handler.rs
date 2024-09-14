@@ -66,8 +66,6 @@ pub async fn handler_flowgate<S: HttpServer + Send + 'static + Sync>(
     .unwrap()
     .collect::<Vec<SocketAddr>>()[0];
 
-    dbg!(&addr);
-
     let req = match HttpRequest::read(sock.get_mut(), &addr).await {
         Ok(i) => i,
         Err(e) => {
@@ -75,8 +73,6 @@ pub async fn handler_flowgate<S: HttpServer + Send + 'static + Sync>(
             return;
         }
     };
-
-    dbg!(&req);
 
     let resp = match server.on_request(&req).await {
         Some(i) => i,
