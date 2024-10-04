@@ -17,29 +17,30 @@ pub async fn handler_connection<S: HttpServer + Send + 'static + Sync>(
 ) {
     let Ok(addr) = sock.get_ref().peer_addr() else { return; };
 
-    let req = match HttpRequest::read(sock.get_mut(), &addr).await {
-        Ok(i) => i,
-        Err(e) => {
-            server.on_error(e).await;
-            return;
-        }
-    };
+    loop {
+        let req = match HttpRequest::read(sock.get_mut(), &addr).await {
+            Ok(i) => i,
+            Err(e) => {
+                server.on_error(e).await;
+                return;
+            }
+        };
 
-    let resp = match server.on_request(&req).await {
-        Some(i) => i,
-        None => {
-            return;
-        }
-    };
+        let resp = match server.on_request(&req).await {
+            Some(i) => i,
+            None => {
+                return;
+            }
+        };
 
-    match resp.write(sock.get_mut()).await {
-        Ok(_) => {},
-        Err(e) => {
-            server.on_error(e).await;
-            return;
-        },
+        match resp.write(sock.get_mut()).await {
+            Ok(_) => {},
+            Err(e) => {
+                server.on_error(e).await;
+                return;
+            },
+        }
     }
-
 }
 
 #[macro_export]
@@ -55,37 +56,39 @@ pub async fn handler_flowgate<S: HttpServer + Send + 'static + Sync>(
     server: Arc<S>,
     mut sock: Stream,
 ) {
-    let addr = match read_line_lf(sock.get_mut()).await {
-        Ok(i) => i,
-        Err(e) => {
-            server.on_error(e).await;
-            return;
+    loop {
+        let addr = match read_line_lf(sock.get_mut()).await {
+            Ok(i) => i,
+            Err(e) => {
+                server.on_error(e).await;
+                return;
+            }
         }
-    }
-    .to_socket_addrs()
-    .unwrap()
-    .collect::<Vec<SocketAddr>>()[0];
+        .to_socket_addrs()
+        .unwrap()
+        .collect::<Vec<SocketAddr>>()[0];
 
-    let req = match HttpRequest::read(sock.get_mut(), &addr).await {
-        Ok(i) => i,
-        Err(e) => {
-            server.on_error(e).await;
-            return;
+        let req = match HttpRequest::read(sock.get_mut(), &addr).await {
+            Ok(i) => i,
+            Err(e) => {
+                server.on_error(e).await;
+                return;
+            }
+        };
+
+        let resp = match server.on_request(&req).await {
+            Some(i) => i,
+            None => {
+                return;
+            }
+        };
+
+        match resp.write(sock.get_mut()).await {
+            Ok(_) => {},
+            Err(e) => {
+                server.on_error(e).await;
+                return;
+            },
         }
-    };
-
-    let resp = match server.on_request(&req).await {
-        Some(i) => i,
-        None => {
-            return;
-        }
-    };
-
-    match resp.write(sock.get_mut()).await {
-        Ok(_) => {},
-        Err(e) => {
-            server.on_error(e).await;
-            return;
-        },
     }
 }
