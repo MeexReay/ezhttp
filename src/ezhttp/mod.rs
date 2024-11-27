@@ -7,7 +7,6 @@ pub mod server;
 pub mod client;
 
 pub mod prelude {
-    pub use super::*;
     pub use super::error::*;
     pub use super::headers::*;
     pub use super::request::*;

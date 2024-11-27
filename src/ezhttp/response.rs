@@ -57,7 +57,7 @@ impl HttpResponse {
 
         self.headers.send(stream).await?;
 
-        stream.write_all(b"\r\n").await.map_err(|_| HttpError::WriteHeadError)?;
+        stream.write_all(b"\r\n").await.map_err(|_| HttpError::WriteBodyError)?;
 
         self.body.send(stream).await?;
 

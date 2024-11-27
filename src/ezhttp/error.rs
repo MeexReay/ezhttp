@@ -14,7 +14,11 @@ pub enum HttpError {
     WriteBodyError,
     InvalidStatus,
     RequestError,
-    UrlError
+    UrlError,
+    ConnectError,
+    ShutdownError,
+    SslError,
+    UnknownScheme
 }
 
 impl std::fmt::Display for HttpError {

@@ -160,6 +160,7 @@ impl Default for Body {
     }
 }
 
+#[derive(Clone,Debug)]
 pub struct Part {
     pub name: String,
     pub body: Body,

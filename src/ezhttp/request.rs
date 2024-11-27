@@ -1,4 +1,4 @@
-use super::{body::{Body, Part}, gen_multipart_boundary, read_line_crlf, headers::Headers, HttpError};
+use super::{body::{Body, Part}, client::RequestBuilder, gen_multipart_boundary, headers::Headers, read_line_crlf, HttpError};
 
 use std::{
     collections::HashMap, fmt::{Debug, Display}, net::SocketAddr, str::FromStr
@@ -184,7 +184,7 @@ impl HttpRequest {
 
         self.headers.send(stream).await?;
 
-        stream.write_all(b"\r\n").await.map_err(|_| HttpError::WriteHeadError)?;
+        stream.write_all(b"\r\n").await.map_err(|_| HttpError::WriteBodyError)?;
 
         self.body.send(stream).await?;
 
@@ -205,6 +205,10 @@ impl HttpRequest {
         self.headers.put("Content-Type", format!("multipart/form-data; boundary={}", boundary.clone()));
         self.body = Body::from_multipart(parts, boundary);
         Some(())
+    }
+
+    pub fn builder(method: String, url: URL) -> RequestBuilder {
+        RequestBuilder::new(method, url)
     }
 }
 
