@@ -1,21 +1,120 @@
-use super::{read_line_crlf, Headers, HttpError};
+use super::{body::{Body, Part}, gen_multipart_boundary, read_line_crlf, headers::Headers, HttpError};
 
-use serde_json::Value;
 use std::{
-    fmt::{Debug, Display},
-    net::SocketAddr,
+    collections::HashMap, fmt::{Debug, Display}, net::SocketAddr, str::FromStr
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+#[derive(Clone, Debug)]
+pub struct URL {
+    pub path: String,
+    pub domain: String,
+    pub anchor: Option<String>,
+    pub query: HashMap<String, String>,
+    pub scheme: String,
+    pub port: u16
+}
+
+impl URL {
+    pub fn new(
+        domain: String,
+        port: u16,
+        path: String,
+        anchor: Option<String>,
+        query: HashMap<String, String>,
+        scheme: String
+    ) -> URL {
+        URL {
+            path,
+            domain,
+            anchor,
+            query,
+            scheme,
+            port
+        }
+    }
+
+    pub fn to_path_string(&self) -> String {
+        format!("{}{}{}", self.path, if self.query.is_empty() {
+            String::new()
+        } else {
+            "?".to_string()+&self.query.iter().map(|o| {
+                format!("{}={}", urlencoding::encode(o.0), urlencoding::encode(o.1))
+            }).collect::<Vec<String>>().join("&")
+        }, if let Some(anchor) = &self.anchor {
+            "#".to_string()+anchor
+        } else { 
+            String::new()
+        })
+    }
+
+    pub fn from_path_string(s: &str, scheme: String, domain: String, port: u16) -> Option<Self> {
+        let (s, anchor) = s.split_once("#").unwrap_or((s, ""));
+        let (path, query) = s.split_once("?").unwrap_or((s, ""));
+
+        let anchor = if anchor.is_empty() { None } else { Some(anchor.to_string()) };
+        let query = if query.is_empty() { HashMap::new() } else { {
+            HashMap::from_iter(query.split("&").filter_map(|entry| {
+                let (key, value) = entry.split_once("=").unwrap_or((entry, ""));
+                Some((urlencoding::decode(key).ok()?.to_string(), urlencoding::decode(value).ok()?.to_string()))
+            }))
+        } };
+        let path = path.to_string();
+        let scheme = scheme.to_string();
+        Some(URL { path, domain, anchor, query, scheme, port })
+    }
+}
+
+impl FromStr for URL {
+    type Err = HttpError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (scheme, s) = s.split_once("://").ok_or(HttpError::UrlError)?;
+        let (host, s) = s.split_once("/").unwrap_or((s, ""));
+        let (domain, port) = host.split_once(":").unwrap_or((host, 
+            if scheme == "http" { "80" } 
+            else if scheme == "https" { "443" } 
+            else { return Err(HttpError::UrlError) }
+        ));
+        let port = port.parse::<u16>().map_err(|_| HttpError::UrlError)?;
+        let (s, anchor) = s.split_once("#").unwrap_or((s, ""));
+        let (path, query) = s.split_once("?").unwrap_or((s, ""));
+
+        let anchor = if anchor.is_empty() { None } else { Some(anchor.to_string()) };
+        let query = if query.is_empty() { HashMap::new() } else { {
+            HashMap::from_iter(query.split("&").filter_map(|entry| {
+                let (key, value) = entry.split_once("=").unwrap_or((entry, ""));
+                Some((urlencoding::decode(key).ok()?.to_string(), urlencoding::decode(value).ok()?.to_string()))
+            }))
+        } };
+        let domain = domain.to_string();
+        let path = format!("/{path}");
+        let scheme = scheme.to_string();
+        Ok(URL { path, domain, anchor, query, scheme, port })
+    }
+}
+
+impl ToString for URL {
+    fn to_string(&self) -> String {
+        format!("{}://{}{}", self.scheme, {
+            if (self.scheme == "http" && self.port != 80) || (self.scheme == "https" && self.port != 443) {
+                format!("{}:{}", self.domain, self.port)
+            } else {
+                self.domain.clone()
+            }
+        }, self.to_path_string())
+    }
+}
+
 
 /// Http request
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
-    pub page: String,
+    pub url: URL,
     pub method: String,
-    pub addr: String,
+    pub addr: SocketAddr,
     pub headers: Headers,
-    pub params: Value,
-    pub data: Vec<u8>,
+    pub body: Body
 }
 
 impl Display for HttpRequest {
@@ -26,22 +125,25 @@ impl Display for HttpRequest {
 
 impl HttpRequest {
     /// Create new http request
-    pub fn new(page: &str, method: &str, params: Value, headers: Headers, data: Vec<u8>) -> Self {
+    pub fn new(
+        url: URL,
+        method: String,
+        addr: SocketAddr,
+        headers: Headers,
+        body: Body
+    ) -> Self {
         HttpRequest {
-            page: page.to_string(),
-            method: method.to_string(),
-            addr: String::new(),
-            params,
+            url,
+            method,
+            addr,
             headers,
-            data,
+            body
         }
     }
 
     /// Read http request from stream
-    pub async fn read(data: &mut (impl AsyncReadExt + Unpin), addr: &SocketAddr) -> Result<HttpRequest, HttpError> {
-        let ip_str = addr.to_string();
-
-        let status: Vec<String> = match read_line_crlf(data).await {
+    pub async fn recv(stream: &mut (impl AsyncReadExt + Unpin), addr: &SocketAddr) -> Result<HttpRequest, HttpError> {
+        let status: Vec<String> = match read_line_crlf(stream).await {
             Ok(i) => {
                 i.splitn(3, " ")
                     .map(|s| s.to_string())
@@ -51,205 +153,59 @@ impl HttpRequest {
         };
 
         let method = status[0].clone();
-        let (page, query) = match status[1].split_once("?") {
-            Some(i) => (i.0.to_string(), Some(i.1)),
-            None => (status[1].to_string(), None),
-        };
+        let page = status[1].clone();
 
-        let mut headers = Headers::new();
+        let headers = Headers::recv(stream).await?;
+        let body = Body::recv(stream, &headers).await?;
 
-        loop {
-            let text = match read_line_crlf(data).await {
-                Ok(i) => i,
-                Err(_) => return Err(HttpError::InvalidHeaders),
-            };
-
-            if text.len() == 0 {
-                break;
-            }
-
-            let (key, value) = match text.split_once(": ") {
-                Some(i) => i,
-                None => return Err(HttpError::InvalidHeaders),
-            };
-
-            headers.put(key.to_lowercase(), value.to_string());
-        }
-
-        let mut params = serde_json::Map::new();
-
-        if let Some(i) = query {
-            for ele in i.split("&") {
-                let (k, v) = match ele.split_once("=") {
-                    Some(i) => i,
-                    None => return Err(HttpError::InvalidQuery),
-                };
-
-                params.insert(
-                    match urlencoding::decode(k) {
-                        Ok(i) => i.to_string(),
-                        Err(_) => return Err(HttpError::InvalidQuery),
-                    },
-                    match urlencoding::decode(v) {
-                        Ok(i) => Value::String(i.to_string()),
-                        Err(_) => return Err(HttpError::InvalidQuery),
-                    },
-                );
-            }
-        }
-
-        let mut reqdata: Vec<u8> = Vec::new();
-
-        if let Some(content_size) = headers.clone().get("content-length".to_string()) {
-            let content_size: usize = match content_size.parse() {
-                Ok(i) => i,
-                Err(_) => return Err(HttpError::InvalidContentSize),
-            };
-
-            if content_size > reqdata.len() {
-                let mut buf: Vec<u8> = Vec::new();
-                buf.resize(content_size - reqdata.len(), 0);
-
-                match data.read_exact(&mut buf).await {
-                    Ok(i) => i,
-                    Err(_) => return Err(HttpError::InvalidContent),
-                };
-
-                reqdata.append(&mut buf);
-            }
-        }
-
-        if let Some(content_type) = headers.clone().get("content-type".to_string()) {
-            let mut body = match String::from_utf8(reqdata.clone()) {
-                Ok(i) => i,
-                Err(_) => return Err(HttpError::InvalidContent),
-            };
-
-            match content_type.as_str() {
-                "application/json" => {
-                    let val: Value = match serde_json::from_str(&body) {
-                        Ok(i) => i,
-                        Err(_) => return Err(HttpError::JsonParseError),
-                    };
-
-                    if let Value::Object(mut dict) = val {
-                        params.append(&mut dict);
-                    }
-                }
-                "multipart/form-data" => {
-                    let boundary = "--".to_string()
-                        + &content_type[(content_type.find("boundary=").unwrap() + 9)..]
-                        + "\r\n";
-                    for part in body.split(boundary.as_str()) {
-                        let lines: Vec<&str> = part.split("\r\n").collect();
-                        if lines.len() >= 3 {
-                            if lines[0].starts_with("Content-Disposition: form-data; name=\"") {
-                                let name: &str =
-                                    &lines[0]["Content-Disposition: form-data; name=\"".len()..];
-                                let name: &str = &name[..name.len() - 1];
-                                params
-                                    .insert(name.to_string(), Value::String(lines[2].to_string()));
-                            }
-                        }
-                    }
-                }
-                "application/x-www-form-urlencoded" => {
-                    if body.starts_with("?") {
-                        body = body.as_str()[1..].to_string()
-                    }
-
-                    for ele in body.split("&") {
-                        let (k, v) = match ele.split_once("=") {
-                            Some(i) => i,
-                            None => return Err(HttpError::InvalidQuery),
-                        };
-
-                        params.insert(
-                            match urlencoding::decode(k) {
-                                Ok(i) => i.to_string(),
-                                Err(_) => return Err(HttpError::InvalidQuery),
-                            },
-                            match urlencoding::decode(v) {
-                                Ok(i) => Value::String(i.to_string()),
-                                Err(_) => return Err(HttpError::InvalidQuery),
-                            },
-                        );
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        Ok(HttpRequest {
-            page,
-            method,
-            addr: ip_str.to_string(),
-            params: Value::Object(params),
-            headers,
-            data: reqdata.clone(),
-        })
-    }
-
-    /// Set params to query in url
-    pub fn params_to_page(&mut self) {
-        let mut query = String::new();
-
-        let mut i: bool = !self.page.contains("?");
-
-        if let Value::Object(obj) = self.params.clone() {
-            for (k, v) in obj {
-                query.push_str(if i { "?" } else { "&" });
-                query.push_str(urlencoding::encode(k.as_str()).to_string().as_str());
-                query.push_str("=");
-                query.push_str(
-                    urlencoding::encode(v.as_str().unwrap())
-                        .to_string()
-                        .as_str(),
-                );
-                i = false;
-            }
-        }
-
-        self.page += query.as_str();
-    }
-
-    /// Set params to json data
-    pub fn params_to_json(&mut self) {
-        self.data = Vec::from(self.params.to_string().as_bytes());
+        Ok(HttpRequest::new(
+            URL::from_path_string(
+                &page, 
+                "http".to_string(), 
+                "localhost".to_string(), 
+                80
+            ).ok_or(HttpError::UrlError)?,
+            method, 
+            addr.clone(), 
+            headers, 
+            body
+        ))
     }
 
     /// Write http request to stream
-    ///
-    /// [`params`](Self::params) is not written to the stream, you need to use [`params_to_json`](Self::params_to_json) or [`params_to_page`](Self::params_to_page)
-    pub async fn write(self, data: &mut (impl AsyncWriteExt + Unpin)) -> Result<(), HttpError> {
+    pub async fn send(&self, stream: &mut (impl AsyncWriteExt + Unpin)) -> Result<(), HttpError> {
         let mut head: String = String::new();
         head.push_str(&self.method);
         head.push_str(" ");
-        head.push_str(&self.page);
+        head.push_str(&self.url.to_path_string());
         head.push_str(" HTTP/1.1");
         head.push_str("\r\n");
+        stream.write_all(head.as_bytes()).await.map_err(|_| HttpError::WriteHeadError)?;
 
-        for (k, v) in self.headers.entries() {
-            head.push_str(&k);
-            head.push_str(": ");
-            head.push_str(&v);
-            head.push_str("\r\n");
-        }
+        self.headers.send(stream).await?;
 
-        head.push_str("\r\n");
+        stream.write_all(b"\r\n").await.map_err(|_| HttpError::WriteHeadError)?;
 
-        match data.write_all(head.as_bytes()).await {
-            Ok(i) => i,
-            Err(_) => return Err(HttpError::WriteHeadError),
-        };
-
-        if !self.data.is_empty() {
-            match data.write_all(&self.data).await {
-                Ok(i) => i,
-                Err(_) => return Err(HttpError::WriteBodyError),
-            };
-        }
+        self.body.send(stream).await?;
 
         Ok(())
     }
+
+    pub fn get_multipart(&self) -> Option<Vec<Part>> {
+        let boundary = self.headers.get("content-type")?
+            .split(";")
+            .map(|o| o.trim())
+            .find(|o| o.starts_with("boundary="))
+            .map(|o| o[9..].to_string())?;
+        Some(self.body.as_multipart(boundary))
+    }
+
+    pub fn set_multipart(&mut self, parts: Vec<Part>) -> Option<()> {
+        let boundary = gen_multipart_boundary();
+        self.headers.put("Content-Type", format!("multipart/form-data; boundary={}", boundary.clone()));
+        self.body = Body::from_multipart(parts, boundary);
+        Some(())
+    }
 }
+
+

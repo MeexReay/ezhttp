@@ -3,6 +3,10 @@ use std::{
     fmt::{Debug, Display},
 };
 
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+use super::{read_line_crlf, error::HttpError};
+
 /// Http headers
 #[derive(Clone, Debug)]
 pub struct Headers {
@@ -92,6 +96,31 @@ impl Headers {
 
     pub fn clear(&mut self) {
         self.entries.clear();
+    }
+
+    pub async fn recv(stream: &mut (impl AsyncReadExt + Unpin)) -> Result<Headers, HttpError> {
+        let mut headers = Headers::new();
+
+        loop {
+            let text = read_line_crlf(stream).await.map_err(|_| HttpError::InvalidHeaders)?;
+            if text.len() == 0 { break }
+
+            let (key, value) = text.split_once(": ").ok_or(HttpError::InvalidHeaders)?;
+            headers.put(key.to_lowercase(), value.to_string());
+        }
+
+        Ok(headers)
+    }
+
+    pub async fn send(&self, stream: &mut (impl AsyncWriteExt + Unpin)) -> Result<(), HttpError> {
+        let mut head = String::new();
+        for (k, v) in self.entries() {
+            head.push_str(&k);
+            head.push_str(": ");
+            head.push_str(&v);
+            head.push_str("\r\n");
+        }
+        stream.write_all(head.as_bytes()).await.map_err(|_| HttpError::WriteHeadError)
     }
 }
 

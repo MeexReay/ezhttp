@@ -1,15 +1,19 @@
-use super::{read_line_crlf, Headers, HttpError};
+use super::{body::{Body, Part}, gen_multipart_boundary, read_line_crlf, headers::Headers, HttpError};
 
-use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::fmt::{Debug, Display};
+
+pub mod status_code {
+    pub const OK: &str = "200 OK";
+    pub const NOT_FOUND: &str = "404 Not Found";
+}
 
 /// Http response
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
-    pub headers: Headers,
     pub status_code: String,
-    pub data: Vec<u8>,
+    pub headers: Headers,
+    pub body: Body,
 }
 
 impl Display for HttpResponse {
@@ -19,148 +23,68 @@ impl Display for HttpResponse {
 }
 
 impl HttpResponse {
-    /// Create new http response with empty headers and data and a 200 OK status code
-    pub fn new() -> Self {
-        Self::from_bytes(Headers::new(), "200 OK", Vec::new())
-    }
-
-    /// Create new http response from headers, bytes data, and status code
-    pub fn from_bytes(headers: Headers, status_code: impl ToString, data: Vec<u8>) -> Self {
+    pub fn new(
+        status_code: &str,
+        headers: Headers,
+        body: Body
+    ) -> Self {
         HttpResponse {
-            headers,
-            data,
             status_code: status_code.to_string(),
-        }
-    }
-
-    /// Create new http response from headers, string data, and status code
-    pub fn from_string(headers: Headers, status_code: impl ToString, data: impl ToString) -> Self {
-        HttpResponse {
             headers,
-            data: data.to_string().into_bytes(),
-            status_code: status_code.to_string(),
-        }
-    }
-
-    /// Get data in UTF-8
-    pub fn get_text(self) -> String {
-        match String::from_utf8(self.data) {
-            Ok(i) => i,
-            Err(_) => String::new(),
-        }
-    }
-
-    /// Get json [`Value`](Value) from data
-    pub fn get_json(self) -> Value {
-        match serde_json::from_str(self.get_text().as_str()) {
-            Ok(i) => i,
-            Err(_) => Value::Null,
+            body
         }
     }
 
     /// Read http response from stream
-    pub async fn read(data: &mut (impl AsyncReadExt + Unpin)) -> Result<HttpResponse, HttpError> {
-        let status = match read_line_crlf(data).await {
-            Ok(i) => i,
-            Err(e) => {
-                return Err(e);
-            }
-        };
+    pub async fn recv(stream: &mut (impl AsyncReadExt + Unpin)) -> Result<HttpResponse, HttpError> {
+        let status = read_line_crlf(stream).await?;
 
-        let (_, status_code) = match status.split_once(" ") {
-            Some(i) => i,
-            None => return Err(HttpError::InvalidStatus),
-        };
+        let (_, status_code) = status.split_once(" ").ok_or(HttpError::InvalidStatus)?;
 
-        let mut headers = Headers::new();
+        let headers = Headers::recv(stream).await?;
+        let body = Body::recv(stream, &headers).await?;
 
-        loop {
-            let text = match read_line_crlf(data).await {
-                Ok(i) => i,
-                Err(_) => return Err(HttpError::InvalidHeaders),
-            };
-
-            if text.len() == 0 {
-                break;
-            }
-
-            let (key, value) = match text.split_once(": ") {
-                Some(i) => i,
-                None => return Err(HttpError::InvalidHeaders),
-            };
-
-            headers.put(key.to_lowercase(), value.to_string());
-        }
-
-        let mut reqdata: Vec<u8> = Vec::new();
-
-        if let Some(content_size) = headers.clone().get("content-length".to_string()) {
-            let content_size: usize = match content_size.parse() {
-                Ok(i) => i,
-                Err(_) => return Err(HttpError::InvalidContentSize),
-            };
-
-            if content_size > reqdata.len() {
-                let mut buf: Vec<u8> = Vec::new();
-                buf.resize(content_size - reqdata.len(), 0);
-
-                match data.read_exact(&mut buf).await {
-                    Ok(i) => i,
-                    Err(_) => return Err(HttpError::InvalidContent),
-                };
-
-                reqdata.append(&mut buf);
-            }
-        } else {
-            loop {
-                let mut buf: Vec<u8> = vec![0; 1024 * 32];
-
-                let buf_len = match data.read(&mut buf).await {
-                    Ok(i) => i,
-                    Err(_) => {
-                        break;
-                    }
-                };
-
-                if buf_len == 0 {
-                    break;
-                }
-
-                buf.truncate(buf_len);
-
-                reqdata.append(&mut buf);
-            }
-        }
-
-        Ok(HttpResponse::from_bytes(headers, status_code, reqdata))
+        Ok(HttpResponse::new(status_code, headers, body))
     }
 
     /// Write http response to stream
-    pub async fn write(self, data: &mut (impl AsyncWriteExt + Unpin)) -> Result<(), HttpError> {
+    pub async fn send(self, stream: &mut (impl AsyncWriteExt + Unpin)) -> Result<(), HttpError> {
         let mut head: String = String::new();
         head.push_str("HTTP/1.1 ");
         head.push_str(&self.status_code);
         head.push_str("\r\n");
+        stream.write_all(head.as_bytes()).await.map_err(|_| HttpError::WriteHeadError)?;
 
-        for (k, v) in self.headers.entries() {
-            head.push_str(&k);
-            head.push_str(": ");
-            head.push_str(&v);
-            head.push_str("\r\n");
-        }
+        self.headers.send(stream).await?;
 
-        head.push_str("\r\n");
+        stream.write_all(b"\r\n").await.map_err(|_| HttpError::WriteHeadError)?;
 
-        match data.write_all(head.as_bytes()).await {
-            Ok(i) => i,
-            Err(_) => return Err(HttpError::WriteHeadError),
-        };
-
-        match data.write_all(&self.data).await {
-            Ok(i) => i,
-            Err(_) => return Err(HttpError::WriteHeadError),
-        };
+        self.body.send(stream).await?;
 
         Ok(())
+    }
+
+    pub fn get_multipart(&self) -> Option<Vec<Part>> {
+        let boundary = self.headers.get("content-type")?
+            .split(";")
+            .map(|o| o.trim())
+            .find(|o| o.starts_with("boundary="))
+            .map(|o| o[9..].to_string())?;
+        Some(self.body.as_multipart(boundary))
+    }
+
+    pub fn set_multipart(&mut self, parts: Vec<Part>) -> Option<()> {
+        let boundary = gen_multipart_boundary();
+        self.headers.put("Content-Type", format!("multipart/form-data; boundary={}", boundary.clone()));
+        self.body = Body::from_multipart(parts, boundary);
+        Some(())
+    }
+}
+
+impl Default for HttpResponse {
+    
+    /// Create new http response with empty headers and data and a 200 OK status code
+    fn default() -> Self {
+        Self::new("200 OK", Headers::new(), Body::default())
     }
 }

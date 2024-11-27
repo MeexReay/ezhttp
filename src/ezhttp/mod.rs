@@ -1,34 +1,90 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::{
-    boxed::Box,
-    error::Error,
-    future::Future,
-    sync::Arc,
-    time::Duration,
-};
-
-use tokio::io::AsyncReadExt;
-use threadpool::ThreadPool;
-use tokio::net::{TcpListener, TcpStream};
-use tokio::runtime::Runtime;
-use tokio_io_timeout::TimeoutStream;
-
 pub mod error;
 pub mod headers;
 pub mod request;
 pub mod response;
-pub mod starter;
-pub mod handler;
+pub mod body;
+pub mod server;
+pub mod client;
 
-pub use error::*;
-pub use headers::*;
-pub use request::*;
-pub use response::*;
-pub use starter::*;
-pub use handler::*;
+pub mod prelude {
+    pub use super::*;
+    pub use super::error::*;
+    pub use super::headers::*;
+    pub use super::request::*;
+    pub use super::response::*;
+    pub use super::response::status_code::*;
+    pub use super::body::*;
+    pub use super::server::*;
+    pub use super::server::handler::*;
+    pub use super::server::starter::*;
+    pub use super::client::*;
+}
 
-use crate::pin_handler;
+use error::HttpError;
+use rand::Rng;
+use tokio::{io::AsyncReadExt, net::TcpStream};
+use tokio_io_timeout::TimeoutStream;
 
+const CHARS: &str = "qwertyuiopasdfghjklzxcvbnm0123456789QWERTYUIOPASDFGHJKLZXCVBNM'()+_,-./:=?";
+
+pub fn gen_multipart_boundary() -> String {
+    let range = 20..40;
+    let length: usize = rand::thread_rng().gen_range(range);
+    [0..length].iter().map(|_|
+        String::from(CHARS.chars()
+            .collect::<Vec<char>>()
+            .get(rand::thread_rng()
+                .gen_range(0..CHARS.len())
+            ).unwrap().clone()
+        )
+    ).collect::<Vec<String>>().join("")
+}
+
+fn split_bytes_once(bytes: &[u8], sep: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    if let Some(index) = bytes.windows(sep.len())
+            .enumerate()
+            .filter(|o| o.1 == sep)
+            .map(|o| o.0)
+            .next() {
+        let t = bytes.split_at(index);
+        (t.0.to_vec(), t.1.split_at(sep.len()).1.to_vec())
+    } else {
+        (Vec::from(bytes), Vec::new())
+    }
+}
+
+fn split_bytes(bytes: &[u8], sep: &[u8]) -> Vec<Vec<u8>> {
+    if bytes.len() >= sep.len() {
+        let indexes: Vec<usize> = bytes.windows(sep.len())
+            .enumerate()
+            .filter(|o| o.1 == sep)
+            .map(|o| o.0)
+            .collect();
+        let mut parts: Vec<Vec<u8>> = Vec::new();
+        let mut now_part: Vec<u8> = Vec::new();
+        let mut i = 0usize;
+        loop {
+            if i >= bytes.len() {
+                break;
+            }
+
+            if indexes.contains(&i) {
+                parts.push(now_part.clone());
+                now_part.clear();
+                i += sep.len();
+                continue;
+            }
+            
+            now_part.push(bytes[i]);
+
+            i += 1;
+        }
+        parts.push(now_part);
+        parts
+    } else {
+        vec![Vec::from(bytes)]
+    }
+}
 
 async fn read_line(data: &mut (impl AsyncReadExt + Unpin)) -> Result<String, HttpError> {
     let mut line = Vec::new();
@@ -51,157 +107,4 @@ async fn read_line_crlf(data: &mut (impl AsyncReadExt + Unpin)) -> Result<String
     }
 }
 
-async fn read_line_lf(data: &mut (impl AsyncReadExt + Unpin)) -> Result<String, HttpError> {
-    match read_line(data).await {
-        Ok(i) => Ok(i[..i.len() - 1].to_string()),
-        Err(e) => Err(e),
-    }
-}
-
 pub type Stream = TimeoutStream<TcpStream>;
-
-/// Async http server trait
-pub trait HttpServer {
-    fn on_start(&self, host: &str) -> impl Future<Output = ()> + Send;
-    fn on_close(&self) -> impl Future<Output = ()> + Send;
-    fn on_request(
-        &self,
-        req: &HttpRequest,
-    ) -> impl Future<Output = Option<HttpResponse>> + Send;
-    fn on_error(
-        &self, 
-        _: HttpError
-    ) -> impl Future<Output = ()> + Send {
-        async {}
-    }
-}
-
-async fn start_server_with_threadpool<T>(
-    server: T,
-    host: &str,
-    timeout: Option<Duration>,
-    threads: usize,
-    handler: Handler<T>,
-    running: Arc<AtomicBool>,
-) -> Result<(), Box<dyn Error>>
-where
-    T: HttpServer + Send + 'static + Sync,
-{
-    let threadpool = ThreadPool::new(threads);
-
-    let server = Arc::new(server);
-    let listener = TcpListener::bind(host).await?;
-    let old_handler = handler;
-    let handler = Arc::new(move |now_server, sock| { 
-        Runtime::new().unwrap().block_on(old_handler(now_server, sock)); 
-    });
-
-    let host_clone = String::from(host).clone();
-    let server_clone = server.clone();
-    server_clone.on_start(&host_clone).await;
-
-    while running.load(Ordering::Acquire) {
-        let Ok((sock, _)) = listener.accept().await else { continue; };
-        let mut sock = TimeoutStream::new(sock);
-
-        sock.set_read_timeout(timeout);
-        sock.set_write_timeout(timeout);
-
-        let now_server = Arc::clone(&server);
-        let now_handler = Arc::clone(&handler);
-
-        threadpool.execute(move || {
-            (now_handler)(now_server, sock);
-        });
-    }
-
-    threadpool.join();
-
-    server.on_close().await;
-
-    Ok(())
-}
-
-async fn start_server_new_thread<T>(
-    server: T,
-    host: &str,
-    timeout: Option<Duration>,
-    handler: Handler<T>,
-    running: Arc<AtomicBool>,
-) -> Result<(), Box<dyn Error>>
-where
-    T: HttpServer + Send + 'static,
-{
-    let server = Arc::new(server);
-    let listener = TcpListener::bind(host).await?;
-
-    let host_clone = String::from(host).clone();
-    let server_clone = server.clone();
-    server_clone.on_start(&host_clone).await;
-
-    while running.load(Ordering::Acquire) {
-        let Ok((sock, _)) = listener.accept().await else { continue; };
-        let mut sock = TimeoutStream::new(sock);
-
-        sock.set_read_timeout(timeout);
-        sock.set_write_timeout(timeout);
-
-        let now_server = Arc::clone(&server);
-
-        tokio::spawn((&handler)(now_server, sock));
-    }
-
-    server.on_close().await;
-
-    Ok(())
-}
-
-async fn start_server_sync<T>(
-    server: T,
-    host: &str,
-    timeout: Option<Duration>,
-    handler: Handler<T>,
-    running: Arc<AtomicBool>,
-) -> Result<(), Box<dyn Error>>
-where
-    T: HttpServer + Send + 'static,
-{
-    let server = Arc::new(server);
-    let listener = TcpListener::bind(host).await?;
-
-    let host_clone = String::from(host).clone();
-    let server_clone = server.clone();
-    server_clone.on_start(&host_clone).await;
-
-    while running.load(Ordering::Acquire) {
-        let Ok((sock, _)) = listener.accept().await else { continue; };
-        let mut sock = TimeoutStream::new(sock);
-
-        sock.set_read_timeout(timeout);
-        sock.set_write_timeout(timeout);
-
-        let now_server = Arc::clone(&server);
-
-        handler(now_server, sock).await;
-    }
-
-    server.on_close().await;
-
-    Ok(())
-}
-
-/// Start [`HttpServer`](HttpServer) on some host
-///
-/// Use [`HttpServerStarter`](HttpServerStarter) to set more options
-pub async fn start_server<T: HttpServer + Send + 'static + Sync>(
-    server: T, 
-    host: &str
-) -> Result<(), Box<dyn Error>> {
-    start_server_new_thread(
-        server,
-        host,
-        None,
-        pin_handler!(handler_connection),
-        Arc::new(AtomicBool::new(true)),
-    ).await
-}
