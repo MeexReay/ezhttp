@@ -6,7 +6,7 @@ This library is under developement, so if you found any bugs, please write them 
 ## Setup
 
 ```toml
-ezhttp = "0.1.6" # stable
+ezhttp = "0.2.0" # stable
 ezhttp = { git = "https://github.com/MeexReay/ezhttp" } # unstable
 ```
 

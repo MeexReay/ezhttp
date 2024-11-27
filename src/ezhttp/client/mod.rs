@@ -40,7 +40,7 @@ async fn send_request(request: HttpRequest, ssl_verify: bool, _proxy: Proxy, hea
         let mut ssl_connector = SslConnector::builder(SslMethod::tls())
             .map_err(|_| HttpError::SslError)?;
         
-        ssl_connector.set_verify(if ssl_verify { SslVerifyMode::PEER }  else { SslVerifyMode::NONE });
+        ssl_connector.set_verify(if ssl_verify { SslVerifyMode::PEER } else { SslVerifyMode::NONE });
 
         let ssl_connector = ssl_connector.build();
 
