@@ -4,7 +4,7 @@ use std::net::{ToSocketAddrs, SocketAddr};
 pub enum Proxy {
     None,
     Socks5 { host: SocketAddr, auth: Option<(String, String)> },
-    Socks4 { host: SocketAddr, user: String },
+    Socks4 { host: SocketAddr, user: Option<String> },
     Http { host: SocketAddr, auth: Option<(String, String)> },
     Https { host: SocketAddr, auth: Option<(String, String)> },
 }
@@ -22,8 +22,12 @@ impl Proxy {
         Self::Socks5 { host: host.to_socket_addrs().unwrap().next().unwrap(), auth: Some((user, password)) }
     }
 
-    pub fn socks4(host: impl ToSocketAddrs, user_id: String) -> Self {
-        Self::Socks4 { host: host.to_socket_addrs().unwrap().next().unwrap(), user: user_id }
+    pub fn socks4(host: impl ToSocketAddrs) -> Self {
+        Self::Socks4 { host: host.to_socket_addrs().unwrap().next().unwrap(), user: None }
+    }
+
+    pub fn socks4_with_auth(host: impl ToSocketAddrs, user_id: String) -> Self {
+        Self::Socks4 { host: host.to_socket_addrs().unwrap().next().unwrap(), user: Some(user_id) }
     }
 
     pub fn http(host: impl ToSocketAddrs) -> Self {

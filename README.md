@@ -1,5 +1,5 @@
 # EzHttp
-Easy http server for small sites
+Simple http library with client and server
 
 This library is under developement, so if you found any bugs, please write them to [Issues](https://github.com/MeexReay/ezhttp/issues)
 
@@ -12,7 +12,27 @@ ezhttp = { git = "https://github.com/MeexReay/ezhttp" } # unstable
 
 ## Examples
 
-Hello world example:
+Client example:
+```rust
+use ezhttp::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<(), HttpError> {
+    let client = HttpClient::builder().build(); // or HttpClient::default() 
+
+    let url = URL::from_str("https://google.com")?;
+    let request: HttpRequest = RequestBuilder::get(url).build();
+
+    let response: HttpResponse = client.send(request).await?;
+
+    println!("response status: {}", response.status_code);
+    println!("response body: {} bytes", response.body.as_text().unwrap().len());
+    
+    Ok(())
+}
+```
+
+Site example:
 ```rust
 use ezhttp::prelude::*;
 
@@ -46,7 +66,14 @@ impl HttpServer for EzSite {
 
 #[tokio::main]
 async fn main() {
-    start_server(EzSite("Hello World!".to_string()), "localhost:8080").await.expect("http server error");
+    HttpServerStarter::new(
+            EzSite("Hello World!".to_string()), 
+            "localhost:8080"
+        ).timeout(Some(Duration::from_secs(5)))
+        .threads(5)
+        .start_forever()
+        .await
+        .expect("http server error");
 }
 ```
 
