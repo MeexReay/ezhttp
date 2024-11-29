@@ -1,5 +1,5 @@
 # EzHttp
-Simple http library with client and server
+Simple async http library with client and server
 
 This library is under developement, so if you found any bugs, please write them to [Issues](https://github.com/MeexReay/ezhttp/issues)
 
