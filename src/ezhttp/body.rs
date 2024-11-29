@@ -39,7 +39,7 @@ impl Body {
     }
 
     pub fn as_json(&self) -> Option<Value> {
-        serde_json::to_value(self.as_text()?).ok()
+        serde_json::from_str(&self.as_text()?).ok()
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Body {
