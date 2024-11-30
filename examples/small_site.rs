@@ -1,9 +1,9 @@
-use ezhttp::prelude::*;
+use ezhttp::{prelude::*, Sendable};
 
 struct EzSite(String);
 
 impl HttpServer for EzSite {
-    async fn on_request(&self, req: &HttpRequest) -> Option<HttpResponse> {
+    async fn on_request(&self, req: &HttpRequest) -> Option<impl Sendable> {
         println!("{} > {} {}", req.addr, req.method, req.url.to_path_string());
 
         if req.url.path == "/" {

@@ -11,7 +11,7 @@ use ezhttp::{
     server::{
         starter::HttpServerStarter, 
         HttpServer
-    }
+    }, Sendable
 };
 
 struct EzSite {
@@ -63,7 +63,7 @@ impl EzSite {
 }
 
 impl HttpServer for EzSite {
-    async fn on_request(&self, req: &HttpRequest) -> Option<HttpResponse> {
+    async fn on_request(&self, req: &HttpRequest) -> Option<impl Sendable> {
         println!("{} > {} {}", req.addr, req.method, req.url.to_path_string());
 
         if let Some(resp) = self.get_main_page(req).await {
