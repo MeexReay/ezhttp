@@ -1,11 +1,12 @@
 use std::{collections::HashMap, path::PathBuf};
 
+use async_trait::async_trait;
 use serde_json::Value;
 use tokio::{fs, io::{AsyncReadExt, AsyncWriteExt}};
 
 use crate::ezhttp::{split_bytes, split_bytes_once};
 
-use super::{read_line_crlf, headers::Headers, error::HttpError};
+use super::{error::HttpError, headers::Headers, read_line_crlf, Sendable};
 
 #[derive(Debug, Clone)]
 pub struct Body {
@@ -146,8 +147,11 @@ impl Body {
 
         Ok(Body::from_bytes(&reqdata))
     }
+}
 
-    pub async fn send(&self, stream: &mut (impl AsyncWriteExt + Unpin)) -> Result<(), HttpError> {
+#[async_trait]
+impl Sendable for Body {
+    async fn send(&self, stream: &mut (impl AsyncWriteExt + Unpin + Send)) -> Result<(), HttpError> {
         stream.write_all(&self.as_bytes()).await.map_err(|_| HttpError::WriteHeadError)
     }
 }

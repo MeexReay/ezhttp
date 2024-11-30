@@ -1,5 +1,6 @@
-use super::{body::{Body, Part}, gen_multipart_boundary, read_line_crlf, headers::Headers, HttpError};
+use super::{body::{Body, Part}, gen_multipart_boundary, headers::Headers, read_line_crlf, HttpError, Sendable};
 
+use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::fmt::{Debug, Display};
 
@@ -47,23 +48,6 @@ impl HttpResponse {
         Ok(HttpResponse::new(status_code, headers, body))
     }
 
-    /// Write http response to stream
-    pub async fn send(self, stream: &mut (impl AsyncWriteExt + Unpin)) -> Result<(), HttpError> {
-        let mut head: String = String::new();
-        head.push_str("HTTP/1.1 ");
-        head.push_str(&self.status_code);
-        head.push_str("\r\n");
-        stream.write_all(head.as_bytes()).await.map_err(|_| HttpError::WriteHeadError)?;
-
-        self.headers.send(stream).await?;
-
-        stream.write_all(b"\r\n").await.map_err(|_| HttpError::WriteBodyError)?;
-
-        self.body.send(stream).await?;
-
-        Ok(())
-    }
-
     pub fn get_multipart(&self) -> Option<Vec<Part>> {
         let boundary = self.headers.get("content-type")?
             .split(";")
@@ -86,5 +70,25 @@ impl Default for HttpResponse {
     /// Create new http response with empty headers and data and a 200 OK status code
     fn default() -> Self {
         Self::new("200 OK", Headers::new(), Body::default())
+    }
+}
+
+#[async_trait]
+impl Sendable for HttpResponse {
+    /// Write http response to stream
+    async fn send(&self, stream: &mut (impl AsyncWriteExt + Unpin + Send)) -> Result<(), HttpError> {
+        let mut head: String = String::new();
+        head.push_str("HTTP/1.1 ");
+        head.push_str(&self.status_code);
+        head.push_str("\r\n");
+        stream.write_all(head.as_bytes()).await.map_err(|_| HttpError::WriteHeadError)?;
+
+        self.headers.send(stream).await?;
+
+        stream.write_all(b"\r\n").await.map_err(|_| HttpError::WriteBodyError)?;
+
+        self.body.send(stream).await?;
+
+        Ok(())
     }
 }

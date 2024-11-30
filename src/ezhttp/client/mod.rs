@@ -6,7 +6,7 @@ use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use tokio_openssl::SslStream;
 use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 
-use super::{error::HttpError, gen_multipart_boundary, headers::Headers, prelude::HttpResponse, request::HttpRequest};
+use super::{error::HttpError, gen_multipart_boundary, headers::Headers, prelude::HttpResponse, request::HttpRequest, Sendable};
 
 use base64::prelude::BASE64_STANDARD;
 

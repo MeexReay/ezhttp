@@ -21,8 +21,9 @@ pub mod prelude {
 
 use error::HttpError;
 use rand::Rng;
-use tokio::{io::AsyncReadExt, net::TcpStream};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use tokio_io_timeout::TimeoutStream;
+use async_trait::async_trait;
 
 const CHARS: &str = "qwertyuiopasdfghjklzxcvbnm0123456789QWERTYUIOPASDFGHJKLZXCVBNM'()+_,-./:=?";
 
@@ -104,6 +105,11 @@ async fn read_line_crlf(data: &mut (impl AsyncReadExt + Unpin)) -> Result<String
         Ok(i) => Ok(i[..i.len() - 2].to_string()),
         Err(e) => Err(e),
     }
+}
+
+#[async_trait]
+pub trait Sendable: Sized {
+    async fn send(&self, stream: &mut (impl AsyncWriteExt + Unpin + Send)) -> Result<(), HttpError>;
 }
 
 pub type Stream = TimeoutStream<TcpStream>;

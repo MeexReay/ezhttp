@@ -3,9 +3,10 @@ use std::{
     fmt::{Debug, Display},
 };
 
+use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use super::{read_line_crlf, error::HttpError};
+use super::{error::HttpError, read_line_crlf, Sendable};
 
 /// Http headers
 #[derive(Clone, Debug)]
@@ -111,8 +112,17 @@ impl Headers {
 
         Ok(headers)
     }
+}
 
-    pub async fn send(&self, stream: &mut (impl AsyncWriteExt + Unpin)) -> Result<(), HttpError> {
+impl Display for Headers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(self, f)
+    }
+}
+
+#[async_trait]
+impl Sendable for Headers {
+    async fn send(&self, stream: &mut (impl AsyncWriteExt + Unpin + Send)) -> Result<(), HttpError> {
         let mut head = String::new();
         for (k, v) in self.entries() {
             head.push_str(&k);
@@ -121,11 +131,5 @@ impl Headers {
             head.push_str("\r\n");
         }
         stream.write_all(head.as_bytes()).await.map_err(|_| HttpError::WriteHeadError)
-    }
-}
-
-impl Display for Headers {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Debug::fmt(self, f)
     }
 }

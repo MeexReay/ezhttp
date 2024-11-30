@@ -1,8 +1,9 @@
-use super::{body::{Body, Part}, client::RequestBuilder, gen_multipart_boundary, headers::Headers, read_line_crlf, HttpError};
+use super::{body::{Body, Part}, client::RequestBuilder, gen_multipart_boundary, headers::Headers, read_line_crlf, HttpError, Sendable};
 
 use std::{
     collections::HashMap, fmt::{Debug, Display}, net::SocketAddr, str::FromStr
 };
+use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(Clone, Debug)]
@@ -172,25 +173,6 @@ impl HttpRequest {
         ))
     }
 
-    /// Write http request to stream
-    pub async fn send(&self, stream: &mut (impl AsyncWriteExt + Unpin)) -> Result<(), HttpError> {
-        let mut head: String = String::new();
-        head.push_str(&self.method);
-        head.push_str(" ");
-        head.push_str(&self.url.to_path_string());
-        head.push_str(" HTTP/1.1");
-        head.push_str("\r\n");
-        stream.write_all(head.as_bytes()).await.map_err(|_| HttpError::WriteHeadError)?;
-
-        self.headers.send(stream).await?;
-
-        stream.write_all(b"\r\n").await.map_err(|_| HttpError::WriteBodyError)?;
-
-        self.body.send(stream).await?;
-
-        Ok(())
-    }
-
     pub fn get_multipart(&self) -> Option<Vec<Part>> {
         let boundary = self.headers.get("content-type")?
             .split(";")
@@ -212,4 +194,24 @@ impl HttpRequest {
     }
 }
 
+#[async_trait]
+impl Sendable for HttpRequest {
+    /// Write http request to stream
+    async fn send(&self, stream: &mut (impl AsyncWriteExt + Unpin + Send)) -> Result<(), HttpError> {
+        let mut head: String = String::new();
+        head.push_str(&self.method);
+        head.push_str(" ");
+        head.push_str(&self.url.to_path_string());
+        head.push_str(" HTTP/1.1");
+        head.push_str("\r\n");
+        stream.write_all(head.as_bytes()).await.map_err(|_| HttpError::WriteHeadError)?;
 
+        self.headers.send(stream).await?;
+
+        stream.write_all(b"\r\n").await.map_err(|_| HttpError::WriteBodyError)?;
+
+        self.body.send(stream).await?;
+
+        Ok(())
+    }
+}

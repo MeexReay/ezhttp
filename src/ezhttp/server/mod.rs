@@ -16,7 +16,7 @@ use crate::pin_handler;
 
 use super::error::HttpError;
 use super::request::HttpRequest;
-use super::response::HttpResponse;
+use super::Sendable;
 
 pub mod handler;
 pub mod starter;
@@ -30,7 +30,7 @@ pub trait HttpServer {
     fn on_request(
         &self,
         req: &HttpRequest,
-    ) -> impl Future<Output = Option<HttpResponse>> + Send;
+    ) -> impl Future<Output = Option<impl Sendable + Send>> + Send;
     fn on_error(
         &self, 
         _: HttpError
