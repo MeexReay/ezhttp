@@ -110,11 +110,14 @@ impl Body {
                     Some((name.to_lowercase(), value.to_string()))
                 }).collect::<Vec<(String, String)>>();
                 let content_type = head.iter()
-                    .find(|o| o.0.to_lowercase() == "content-type")
+                    .find(|o| o.0 == "content-type")
                     .map(|o| o.1.clone());
                 let (name, filename) = head.iter()
-                    .find(|o| o.0.to_lowercase() == "content-disposition")
-                    .map(|o| o.1.split(";").filter(|o| o == &"form-data").map(|s| s.trim().to_string()).collect::<Vec<String>>())
+                    .find(|o| o.0 == "content-disposition")
+                    .map(|o| o.1.split(";")
+                        .filter(|o| o != &"form-data")
+                        .map(|s| s.trim().to_string())
+                        .collect::<Vec<String>>())
                     .map(|o| (
                         o.iter().find(|k| k.starts_with("name=\"")).map(|k| k[6..k.len()-1].to_string()), 
                         o.iter().find(|k| k.starts_with("filename=\"")).map(|k| k[10..k.len()-1].to_string())
