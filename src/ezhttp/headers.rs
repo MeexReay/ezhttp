@@ -70,6 +70,15 @@ impl Headers {
         self.entries.push((key.to_string(), value));
     }
 
+    pub fn put_default(&mut self, key: impl ToString, value: String) {
+        for t in self.entries.iter_mut() {
+            if t.0.to_lowercase() == key.to_string().to_lowercase() {
+                return;
+            }
+        }
+        self.entries.push((key.to_string(), value));
+    }
+
     pub fn remove(&mut self, key: impl ToString) {
         for (i, t) in self.entries.iter_mut().enumerate() {
             if t.0.to_lowercase() == key.to_string().to_lowercase() {
