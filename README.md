@@ -1,13 +1,13 @@
 # EzHttp
 Simple async http library with client and server
 
-This library is under developement, so if you found any bugs, please write them to [Issues](https://github.com/MeexReay/ezhttp/issues)
+This library is under developement, so if you found any bugs, please write them to [Issues](https://git.meex.lol/MeexReay/ezhttp/issues)
 
 ## Setup
 
 ```toml
-ezhttp = "0.2.0" # stable
-ezhttp = { git = "https://github.com/MeexReay/ezhttp" } # unstable
+ezhttp = "0.2.1" # stable
+ezhttp = { git = "https://git.meex.lol/MeexReay/ezhttp" } # unstable
 ```
 
 ## Examples
@@ -77,7 +77,7 @@ async fn main() {
 }
 ```
 
-[More examples](https://github.com/MeexReay/ezhttp/blob/main/examples)
+[More examples](https://git.meex.lol/MeexReay/ezhttp/src/branch/main/examples)
 
 ### Contributing
 
