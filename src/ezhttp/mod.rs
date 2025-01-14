@@ -21,7 +21,7 @@ pub mod prelude {
 
 use error::HttpError;
 use rand::Rng;
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
+use tokio::{io::{AsyncReadExt, AsyncWrite}, net::TcpStream};
 use tokio_io_timeout::TimeoutStream;
 use async_trait::async_trait;
 
@@ -108,8 +108,11 @@ async fn read_line_crlf(data: &mut (impl AsyncReadExt + Unpin)) -> Result<String
 }
 
 #[async_trait]
-pub trait Sendable: Sized {
-    async fn send(&self, stream: &mut (impl AsyncWriteExt + Unpin + Send)) -> Result<(), HttpError>;
+pub trait Sendable: Send + Sync {
+    async fn send(
+        &self,
+        stream: &mut (dyn AsyncWrite + Unpin + Send + Sync),
+    ) -> Result<(), HttpError>;
 }
 
 pub type Stream = TimeoutStream<TcpStream>;

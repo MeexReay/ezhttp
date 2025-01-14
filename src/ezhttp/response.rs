@@ -1,7 +1,7 @@
 use super::{body::{Body, Part}, gen_multipart_boundary, headers::Headers, read_line_crlf, HttpError, Sendable};
 
 use async_trait::async_trait;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use std::fmt::{Debug, Display};
 
 pub mod status_code {
@@ -75,8 +75,10 @@ impl Default for HttpResponse {
 
 #[async_trait]
 impl Sendable for HttpResponse {
-    /// Write http response to stream
-    async fn send(&self, stream: &mut (impl AsyncWriteExt + Unpin + Send)) -> Result<(), HttpError> {
+    async fn send(
+        &self,
+        stream: &mut (dyn AsyncWrite + Unpin + Send + Sync),
+    ) -> Result<(), HttpError> {
         let mut head: String = String::new();
         head.push_str("HTTP/1.1 ");
         head.push_str(&self.status_code);

@@ -2,11 +2,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     boxed::Box,
     error::Error,
-    future::Future,
     sync::Arc,
     time::Duration,
 };
 
+use async_trait::async_trait;
 use threadpool::ThreadPool;
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
@@ -24,19 +24,18 @@ pub mod starter;
 use handler::{handler_connection, Handler};
 
 /// Async http server trait
+#[async_trait]
 pub trait HttpServer {
-    fn on_start(&self, host: &str) -> impl Future<Output = ()> + Send;
-    fn on_close(&self) -> impl Future<Output = ()> + Send;
-    fn on_request(
+    async fn on_start(&self, host: &str) -> ();
+    async fn on_close(&self) -> ();
+    async fn on_request(
         &self,
         req: &HttpRequest,
-    ) -> impl Future<Output = Option<impl Sendable + Send>> + Send;
-    fn on_error(
+    ) -> Option<Box<dyn Sendable>>;
+    async fn on_error(
         &self, 
         _: HttpError
-    ) -> impl Future<Output = ()> + Send {
-        async {}
-    }
+    ) -> () {}
 }
 
 async fn start_server_with_threadpool<T>(

@@ -4,7 +4,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::{error::HttpError, read_line_crlf, Sendable};
 
@@ -131,7 +131,10 @@ impl Display for Headers {
 
 #[async_trait]
 impl Sendable for Headers {
-    async fn send(&self, stream: &mut (impl AsyncWriteExt + Unpin + Send)) -> Result<(), HttpError> {
+    async fn send(
+        &self,
+        stream: &mut (dyn AsyncWrite + Unpin + Send + Sync),
+    ) -> Result<(), HttpError> {
         let mut head = String::new();
         for (k, v) in self.entries() {
             head.push_str(&k);

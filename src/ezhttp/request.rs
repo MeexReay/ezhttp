@@ -4,7 +4,7 @@ use std::{
     collections::HashMap, fmt::{Debug, Display}, net::SocketAddr, str::FromStr
 };
 use async_trait::async_trait;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[derive(Clone, Debug)]
 pub struct URL {
@@ -196,8 +196,10 @@ impl HttpRequest {
 
 #[async_trait]
 impl Sendable for HttpRequest {
-    /// Write http request to stream
-    async fn send(&self, stream: &mut (impl AsyncWriteExt + Unpin + Send)) -> Result<(), HttpError> {
+    async fn send(
+        &self,
+        stream: &mut (dyn AsyncWrite + Unpin + Send + Sync),
+    ) -> Result<(), HttpError> {
         let mut head: String = String::new();
         head.push_str(&self.method);
         head.push_str(" ");
