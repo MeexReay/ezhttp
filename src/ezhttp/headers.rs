@@ -144,4 +144,7 @@ impl Sendable for Headers {
         }
         stream.write_all(head.as_bytes()).await.map_err(|_| HttpError::WriteHeadError)
     }
+    fn as_box(self) -> Box<dyn Sendable> {
+        Box::new(self)
+    }
 }

@@ -1,9 +1,11 @@
+use async_trait::async_trait;
 use ezhttp::{prelude::*, Sendable};
 
 struct EzSite(String);
 
+#[async_trait]
 impl HttpServer for EzSite {
-    async fn on_request(&self, req: &HttpRequest) -> Option<impl Sendable> {
+    async fn on_request(&self, req: &HttpRequest) -> Option<Box<dyn Sendable>> {
         println!("{} > {} {}", req.addr, req.method, req.url.to_path_string());
 
         if req.url.path == "/" {
@@ -13,7 +15,7 @@ impl HttpServer for EzSite {
                     ("Content-Type", "text/html"),                                 // - content type
                     ("Content-Length", self.0.len().to_string().as_str())          // - content length
                 ]), Body::from_text(&self.0.clone()),                              // response body
-            ))
+            ).as_box())
         } else {
             None // close connection
         }

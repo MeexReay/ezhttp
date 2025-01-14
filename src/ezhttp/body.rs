@@ -160,6 +160,9 @@ impl Sendable for Body {
     ) -> Result<(), HttpError> {
         stream.write_all(&self.as_bytes()).await.map_err(|_| HttpError::WriteHeadError)
     }
+    fn as_box(self) -> Box<dyn Sendable> {
+        Box::new(self)
+    }
 }
 
 impl Default for Body {

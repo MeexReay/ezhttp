@@ -93,4 +93,7 @@ impl Sendable for HttpResponse {
 
         Ok(())
     }
+    fn as_box(self) -> Box<dyn Sendable> {
+        Box::new(self)
+    }
 }

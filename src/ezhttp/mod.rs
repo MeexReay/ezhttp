@@ -16,7 +16,8 @@ pub mod prelude {
     pub use super::server::*;
     pub use super::server::handler::*;
     pub use super::server::starter::*;
-    pub use super::client::*;
+    // pub use super::client::*;
+    pub use super::*;
 }
 
 use error::HttpError;
@@ -113,6 +114,7 @@ pub trait Sendable: Send + Sync {
         &self,
         stream: &mut (dyn AsyncWrite + Unpin + Send + Sync),
     ) -> Result<(), HttpError>;
+    fn as_box(self) -> Box<dyn Sendable>;
 }
 
 pub type Stream = TimeoutStream<TcpStream>;

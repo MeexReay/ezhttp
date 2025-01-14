@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use async_trait::async_trait;
 use ezhttp::{
     body::Body, 
     headers::Headers, 
@@ -62,14 +63,15 @@ impl EzSite {
     }
 }
 
+#[async_trait]
 impl HttpServer for EzSite {
-    async fn on_request(&self, req: &HttpRequest) -> Option<impl Sendable> {
+    async fn on_request(&self, req: &HttpRequest) -> Option<Box<dyn Sendable>> {
         println!("{} > {} {}", req.addr, req.method, req.url.to_path_string());
 
         if let Some(resp) = self.get_main_page(req).await {
-            Some(resp)
+            Some(resp.as_box())
         } else if let Some(resp) = self.get_unknown_page(req).await {
-            Some(resp)
+            Some(resp.as_box())
         } else {
             None // shutdown connection
         }
