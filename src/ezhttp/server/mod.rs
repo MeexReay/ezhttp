@@ -9,7 +9,7 @@ use std::{
 use async_trait::async_trait;
 use threadpool::ThreadPool;
 use tokio::net::TcpListener;
-use tokio::runtime::Runtime;
+use tokio::runtime::Handle;
 use tokio_io_timeout::TimeoutStream;
 
 use crate::pin_handler;
@@ -55,7 +55,7 @@ where
     let listener = TcpListener::bind(host).await?;
     let old_handler = handler;
     let handler = Arc::new(move |now_server, sock| { 
-        Runtime::new().unwrap().block_on(old_handler(now_server, sock)); 
+        Handle::current().block_on(old_handler(now_server, sock)); 
     });
 
     let host_clone = String::from(host).clone();
