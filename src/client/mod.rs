@@ -18,8 +18,6 @@ pub use req_builder::*;
 pub use client::*;
 pub use proxy::*;
 
-
-// TODO: proxy support
 async fn send_request(request: HttpRequest, ssl_verify: bool, proxy: Proxy, headers: Headers) -> Result<HttpResponse, HttpError> {
     let mut request = request.clone();
 

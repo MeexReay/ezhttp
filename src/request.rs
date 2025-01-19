@@ -6,6 +6,7 @@ use std::{
 use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+/// Request URL
 #[derive(Clone, Debug)]
 pub struct URL {
     pub path: String,
@@ -35,6 +36,8 @@ impl URL {
         }
     }
 
+    /// Turns URL object to url string without scheme, domain, port
+    /// Example: /123.html?k=v#anc
     pub fn to_path_string(&self) -> String {
         format!("{}{}{}", self.path, if self.query.is_empty() {
             String::new()
@@ -49,6 +52,8 @@ impl URL {
         })
     }
 
+    /// Turns string without scheme, domain, port to URL object
+    /// Example of string: /123.html?k=v#anc
     pub fn from_path_string(s: &str, scheme: String, domain: String, port: u16) -> Option<Self> {
         let (s, anchor) = s.split_once("#").unwrap_or((s, ""));
         let (path, query) = s.split_once("?").unwrap_or((s, ""));
@@ -69,6 +74,9 @@ impl URL {
 impl FromStr for URL {
     type Err = HttpError;
 
+    /// Turns url string to URL object
+    /// Example: https://domain.com:999/123.html?k=v#anc
+    /// Example 2: http://exampl.eu/sing
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (scheme, s) = s.split_once("://").ok_or(HttpError::UrlError)?;
         let (host, s) = s.split_once("/").unwrap_or((s, ""));
@@ -96,6 +104,9 @@ impl FromStr for URL {
 }
 
 impl ToString for URL {
+    /// Turns URL object to string
+    /// Example: https://domain.com:999/123.html?k=v#anc
+    /// Example 2: http://exampl.eu/sing
     fn to_string(&self) -> String {
         format!("{}://{}{}", self.scheme, {
             if (self.scheme == "http" && self.port != 80) || (self.scheme == "https" && self.port != 443) {
@@ -173,6 +184,7 @@ impl HttpRequest {
         ))
     }
 
+    /// Get multipart parts (requires Content-Type header)
     pub fn get_multipart(&self) -> Option<Vec<Part>> {
         let boundary = self.headers.get("content-type")?
             .split(";")
@@ -182,6 +194,7 @@ impl HttpRequest {
         Some(self.body.as_multipart(boundary))
     }
 
+    /// Set multipart parts (modifies Content-Type header)
     pub fn set_multipart(&mut self, parts: Vec<Part>) -> Option<()> {
         let boundary = gen_multipart_boundary();
         self.headers.put("Content-Type", format!("multipart/form-data; boundary={}", boundary.clone()));
@@ -189,6 +202,7 @@ impl HttpRequest {
         Some(())
     }
 
+    /// Create new request builder
     pub fn builder(method: String, url: URL) -> RequestBuilder {
         RequestBuilder::new(method, url)
     }

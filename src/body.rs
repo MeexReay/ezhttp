@@ -4,9 +4,14 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::{fs, io::{AsyncReadExt, AsyncWrite, AsyncWriteExt}};
 
-use crate::ezhttp::{split_bytes, split_bytes_once};
-
-use super::{error::HttpError, headers::Headers, read_line_crlf, Sendable};
+use super::{
+    split_bytes, 
+    split_bytes_once, 
+    error::HttpError, 
+    headers::Headers, 
+    read_line_crlf, 
+    Sendable
+};
 
 #[derive(Debug, Clone)]
 pub struct Body {

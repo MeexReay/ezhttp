@@ -1,6 +1,6 @@
 use std::error::Error;
 
-/// Http error
+/// Http library errors
 #[derive(Debug)]
 pub enum HttpError {
     ReadLineEof,
