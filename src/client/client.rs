@@ -29,7 +29,7 @@ impl ClientBuilder {
     pub fn new() -> ClientBuilder {
         ClientBuilder {
             proxy: Proxy::None,
-            ssl_verify: false,
+            ssl_verify: true,
             headers: Headers::new(),
             connect_timeout: None, 
             write_timeout: None, 
