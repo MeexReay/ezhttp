@@ -16,7 +16,6 @@ pub mod prelude {
     pub use super::server::*;
     pub use super::server::handler::*;
     pub use super::server::starter::*;
-    pub use super::client::*;
     pub use super::*;
 }
 

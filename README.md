@@ -1,8 +1,6 @@
 # EzHttp
 Simple async http library with client and server
 
-This library is under developement, so if you found any bugs, please write them to [Issues](https://git.meex.lol/MeexReay/ezhttp/issues)
-
 ## Setup
 
 ```toml

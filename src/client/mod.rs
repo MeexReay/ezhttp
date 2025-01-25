@@ -1,8 +1,9 @@
-use std::pin::Pin;
+use std::{pin::Pin, time::Duration};
 
 use base64::Engine;
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
+use tokio::{io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt}, net::TcpStream};
+use tokio_io_timeout::TimeoutStream;
 use tokio_openssl::SslStream;
 use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 
@@ -18,139 +19,66 @@ pub use req_builder::*;
 pub use client::*;
 pub use proxy::*;
 
-async fn send_request(request: HttpRequest, ssl_verify: bool, proxy: Proxy, headers: Headers) -> Result<HttpResponse, HttpError> {
-    let mut request = request.clone();
+trait RequestStream: AsyncRead + AsyncWrite + Unpin + Send + Sync {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send + Sync> RequestStream for T {}
 
+async fn connect_stream(proxy: Proxy, site_host: &str) -> Result<Box<dyn RequestStream>, HttpError> {
+    Ok(match proxy {
+        Proxy::Http { host, auth } | Proxy::Https { host, auth } => {
+            let mut stream = TcpStream::connect(host).await.map_err(|_| HttpError::ConnectError)?;
+            let auth_header = auth.map(|(u, p)| format!("Proxy-Authorization: basic {}\r\n", BASE64_STANDARD.encode(format!("{u}:{p}"))));
+            let connect_request = format!("CONNECT {site_host} HTTP/1.1\r\nHost: {site_host}\r\n{}\r\n", auth_header.unwrap_or_default());
+            stream.write_all(connect_request.as_bytes()).await.map_err(|_| HttpError::ConnectError)?;
+            HttpResponse::recv(&mut stream).await.map_err(|_| HttpError::ConnectError)?;
+            Box::new(stream)
+        }
+        Proxy::Socks4 { host, user } => Box::new(match user {
+            Some(user) => Socks4Stream::connect_with_userid(host, site_host, &user).await.map_err(|_| HttpError::ConnectError)?,
+            None => Socks4Stream::connect(host, site_host).await.map_err(|_| HttpError::ConnectError)?,
+        }),
+        Proxy::Socks5 { host, auth } => Box::new(match auth {
+            Some((u, p)) => Socks5Stream::connect_with_password(host, site_host, &u, &p).await.map_err(|_| HttpError::ConnectError)?,
+            None => Socks5Stream::connect(host, site_host).await.map_err(|_| HttpError::ConnectError)?,
+        }),
+        Proxy::None => Box::new(TcpStream::connect(site_host).await.map_err(|_| HttpError::ConnectError)?),
+    })
+}
+
+async fn send_request(
+    mut request: HttpRequest, ssl_verify: bool, proxy: Proxy, headers: Headers,
+    connect_timeout: Option<Duration>, write_timeout: Option<Duration>, read_timeout: Option<Duration>
+) -> Result<HttpResponse, HttpError> {
     for (key, value) in headers.entries() {
-        request.headers.put(key, value);
+        request.headers.put_default(key, value);
     }
-
-    request.headers.put("Connection", "close".to_string());
-    request.headers.put("Host", request.url.domain.to_string());
-    request.headers.put("Content-Length", request.body.as_bytes().len().to_string());
-
+    request.headers.put_default("Connection", "close".to_string());
+    request.headers.put_default("Host", request.url.domain.to_string());
+    request.headers.put_default("Content-Length", request.body.as_bytes().len().to_string());
+    
     let site_host = format!("{}:{}", request.url.domain, request.url.port);
-
-    match proxy {
-        Proxy::Http { host, auth } => {
-            let mut stream = TcpStream::connect(host).await.map_err(|_| HttpError::ConnectError)?;
-
-            match auth {
-                Some((user,password)) => stream.write_all(&[
-                    b"CONNECT ", site_host.as_bytes(), b" HTTP/1.1\r\n",
-                    b"Host: ", site_host.as_bytes(), b"\r\n",
-                    b"Proxy-Authorization: basic ", BASE64_STANDARD.encode(format!("{user}:{password}")).as_bytes(), b"\r\n\r\n",
-                ].concat()).await,
-                None => stream.write_all(&[
-                    b"CONNECT ", site_host.as_bytes(), b" HTTP/1.1\r\n",
-                    b"Host: ", site_host.as_bytes(), b"\r\n\r\n",
-                ].concat()).await
-            }.map_err(|_| HttpError::ConnectError)?;
-
-            HttpResponse::recv(&mut stream).await.map_err(|_| HttpError::ConnectError)?;
-
-            if request.url.scheme == "http" {
-                request.send(&mut stream).await?;
-        
-                Ok(HttpResponse::recv(&mut stream).await?)
-            } else if request.url.scheme == "https" {
-                let mut wrapper = ssl_wrapper(ssl_verify, request.url.domain.clone(), stream).await?;
-
-                request.send(&mut wrapper).await?;
-        
-                Ok(HttpResponse::recv(&mut wrapper).await?)
-            } else {
-                Err(HttpError::UnknownScheme)
-            }
+    let stream: Box<dyn RequestStream> = match connect_timeout {
+        Some(connect_timeout) => {
+            tokio::time::timeout(
+                connect_timeout,
+                connect_stream(proxy, &site_host)
+            ).await.map_err(|_| HttpError::ConnectError)??
+        }, None => {
+            connect_stream(proxy, &site_host).await?
         }
-        Proxy::Https { host, auth } => {
-            let mut stream = TcpStream::connect(host).await.map_err(|_| HttpError::ConnectError)?;
-
-            match auth {
-                Some((user,password)) => stream.write_all(&[
-                    b"CONNECT ", site_host.as_bytes(), b" HTTP/1.1\r\n",
-                    b"Host: ", site_host.as_bytes(), b"\r\n",
-                    b"Proxy-Authorization: basic ", BASE64_STANDARD.encode(format!("{user}:{password}")).as_bytes(), b"\r\n\r\n",
-                ].concat()).await,
-                None => stream.write_all(&[
-                    b"CONNECT ", site_host.as_bytes(), b" HTTP/1.1\r\n",
-                    b"Host: ", site_host.as_bytes(), b"\r\n\r\n",
-                ].concat()).await
-            }.map_err(|_| HttpError::ConnectError)?;
-
-            HttpResponse::recv(&mut stream).await.map_err(|_| HttpError::ConnectError)?;
-
-            if request.url.scheme == "http" {
-                request.send(&mut stream).await?;
-        
-                Ok(HttpResponse::recv(&mut stream).await?)
-            } else if request.url.scheme == "https" {
-                let mut wrapper = ssl_wrapper(ssl_verify, request.url.domain.clone(), stream).await?;
-
-                request.send(&mut wrapper).await?;
-        
-                Ok(HttpResponse::recv(&mut wrapper).await?)
-            } else {
-                Err(HttpError::UnknownScheme)
-            }
-        }
-        Proxy::Socks4 { host, user } => {
-            let mut stream = match user {
-                Some(user) => Socks4Stream::connect_with_userid(host, site_host, &user).await,
-                None => Socks4Stream::connect(host, site_host).await
-            }.map_err(|_| HttpError::ConnectError)?;
-
-            if request.url.scheme == "http" {
-                request.send(&mut stream).await?;
-        
-                Ok(HttpResponse::recv(&mut stream).await?)
-            } else if request.url.scheme == "https" {
-                let mut wrapper = ssl_wrapper(ssl_verify, request.url.domain.clone(), stream).await?;
-
-                request.send(&mut wrapper).await?;
-        
-                Ok(HttpResponse::recv(&mut wrapper).await?)
-            } else {
-                Err(HttpError::UnknownScheme)
-            }
-        }
-        Proxy::Socks5 { host, auth } => {
-            let mut stream = match auth {
-                Some(auth) => Socks5Stream::connect_with_password(host, site_host, &auth.0, &auth.1).await,
-                None => Socks5Stream::connect(host, site_host).await
-            }.map_err(|_| HttpError::ConnectError)?;
-
-            if request.url.scheme == "http" {
-                request.send(&mut stream).await?;
-        
-                Ok(HttpResponse::recv(&mut stream).await?)
-            } else if request.url.scheme == "https" {
-                let mut wrapper = ssl_wrapper(ssl_verify, request.url.domain.clone(), stream).await?;
-
-                request.send(&mut wrapper).await?;
-        
-                Ok(HttpResponse::recv(&mut wrapper).await?)
-            } else {
-                Err(HttpError::UnknownScheme)
-            }
-        }
-        Proxy::None => {
-            let mut stream = TcpStream::connect(site_host).await.map_err(|_| HttpError::ConnectError)?;
-
-            if request.url.scheme == "http" {
-                request.send(&mut stream).await?;
-        
-                Ok(HttpResponse::recv(&mut stream).await?)
-            } else if request.url.scheme == "https" {
-                let mut wrapper = ssl_wrapper(ssl_verify, request.url.domain.clone(), stream).await?;
-
-                request.send(&mut wrapper).await?;
-        
-                Ok(HttpResponse::recv(&mut wrapper).await?)
-            } else {
-                Err(HttpError::UnknownScheme)
-            }
-        }
+    };
+    
+    let mut stream = TimeoutStream::new(stream);
+    stream.set_write_timeout(write_timeout);
+    stream.set_read_timeout(read_timeout);
+    let mut stream = Box::pin(stream);
+    
+    if request.url.scheme == "https" {
+        let mut stream = ssl_wrapper(ssl_verify, request.url.domain.clone(), stream).await?;
+        request.send(&mut stream).await?;
+        Ok(HttpResponse::recv(&mut stream).await?)
+    } else {
+        request.send(&mut stream).await?;
+        Ok(HttpResponse::recv(&mut stream).await?)
     }
 }
 
