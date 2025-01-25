@@ -74,9 +74,11 @@ impl Headers {
     }
 
     pub fn remove(&mut self, key: impl ToString) {
+        let mut c = 0;
         for (i, t) in self.entries.clone().iter().enumerate() {
             if t.0.to_lowercase() == key.to_string().to_lowercase() {
-                self.entries.remove(i);
+                self.entries.remove(i-c);
+                c += 1
             }
         }
     }
