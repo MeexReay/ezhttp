@@ -4,7 +4,7 @@ Simple async http library with client and server
 ## Setup
 
 ```toml
-ezhttp = "0.2.1" # stable
+ezhttp = "0.2.2" # stable
 ezhttp = { git = "https://git.meex.lol/MeexReay/ezhttp" } # unstable
 ```
 
