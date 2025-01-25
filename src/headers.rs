@@ -51,39 +51,32 @@ impl Headers {
         return false;
     }
 
-    pub fn get(&self, key: impl ToString) -> Option<String> {
-        for (k, v) in &self.entries {
-            if k.to_lowercase() == key.to_string().to_lowercase() {
-                return Some(v.clone());
-            }
-        }
-        return None;
+    pub fn get(&self, key: impl ToString) -> Vec<String> {
+        return self.entries.clone().into_iter()
+            .filter(|(k, _)| k.to_lowercase() == key.to_string().to_lowercase())
+            .map(|(_, v)| v)
+            .collect();
+    }
+
+    pub fn add(&mut self, key: impl ToString, value: String) {
+        self.entries.push((key.to_string(), value));
     }
 
     pub fn put(&mut self, key: impl ToString, value: String) {
-        for t in self.entries.iter_mut() {
-            if t.0.to_lowercase() == key.to_string().to_lowercase() {
-                t.1 = value;
-                return;
-            }
-        }
+        self.remove(key.to_string());
         self.entries.push((key.to_string(), value));
     }
 
     pub fn put_default(&mut self, key: impl ToString, value: String) {
-        for t in self.entries.iter_mut() {
-            if t.0.to_lowercase() == key.to_string().to_lowercase() {
-                return;
-            }
+        if self.get(key.to_string()).is_empty() {
+            self.entries.push((key.to_string(), value));
         }
-        self.entries.push((key.to_string(), value));
     }
 
     pub fn remove(&mut self, key: impl ToString) {
-        for (i, t) in self.entries.iter_mut().enumerate() {
+        for (i, t) in self.entries.clone().iter().enumerate() {
             if t.0.to_lowercase() == key.to_string().to_lowercase() {
                 self.entries.remove(i);
-                return;
             }
         }
     }
@@ -116,7 +109,7 @@ impl Headers {
             if text.len() == 0 { break }
 
             let (key, value) = text.split_once(": ").ok_or(HttpError::InvalidHeaders)?;
-            headers.put(key.to_lowercase(), value.to_string());
+            headers.add(key, value.to_string());
         }
 
         Ok(headers)

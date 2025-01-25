@@ -136,11 +136,11 @@ impl Body {
     pub async fn recv(stream: &mut (impl AsyncReadExt + Unpin), headers: &Headers) -> Result<Body, HttpError> {
         let mut reqdata: Vec<u8> = Vec::new();
 
-        if let Some(content_size) = headers.clone().get("content-length".to_string()) {
+        if let Some(content_size) = headers.clone().get("content-length".to_string()).get(0) {
             let content_size: usize = content_size.parse().map_err(|_| HttpError::InvalidContentSize)?;
             reqdata.resize(content_size, 0);
             stream.read_exact(&mut reqdata).await.map_err(|_| HttpError::InvalidContent)?;
-        } else if let Some(transfer_encoding) = headers.clone().get("transfer_encoding".to_string()) {
+        } else if let Some(transfer_encoding) = headers.clone().get("transfer_encoding".to_string()).get(0) {
             if transfer_encoding.split(",").map(|o| o.trim()).find(|o| o == &"chunked").is_some() {
                 loop {
                     let length = usize::from_str_radix(&read_line_crlf(stream).await?, 16).map_err(|_| HttpError::InvalidContent)?;

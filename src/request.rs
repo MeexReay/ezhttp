@@ -186,7 +186,7 @@ impl HttpRequest {
 
     /// Get multipart parts (requires Content-Type header)
     pub fn get_multipart(&self) -> Option<Vec<Part>> {
-        let boundary = self.headers.get("content-type")?
+        let boundary = self.headers.get("content-type").get(0)?
             .split(";")
             .map(|o| o.trim())
             .find(|o| o.starts_with("boundary="))
