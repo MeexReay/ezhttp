@@ -66,7 +66,7 @@ impl EzSite {
 #[async_trait]
 impl HttpServer for EzSite {
     async fn on_request(&self, req: &HttpRequest) -> Option<Box<dyn Sendable>> {
-        println!("{} > {} {}", req.addr, req.method, req.url.to_path_string());
+        println!("{} > {} {}", req.addr?, req.method, req.url.to_string());
 
         if let Some(resp) = self.get_main_page(req).await {
             Some(resp.as_box())

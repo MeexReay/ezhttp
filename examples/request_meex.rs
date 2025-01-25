@@ -1,9 +1,11 @@
-use std::{error::Error, str::FromStr, time::Duration};
+use std::{error::Error, time::Duration};
 
-use ezhttp::{client::{ClientBuilder, RequestBuilder}, request::URL};
+use ezhttp::{client::{ClientBuilder, RequestBuilder}, request::IntoURL};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    dbg!("https://meex.lol/dku?key=value#hex_id".to_url().unwrap().to_string());
+
     let client = ClientBuilder::new()
         .ssl_verify(false)
         .connect_timeout(Duration::from_secs(5))
@@ -12,7 +14,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .header("User-Agent", "EzHttp/0.1.0")
         .build();
 
-    let request = RequestBuilder::get(URL::from_str("https://meex.lol/dku?key=value#hex_id")?).build();
+    let request = RequestBuilder::get("https://meex.lol/dku?key=value#hex_id");
 
     println!("request: {:?}", &request);
 

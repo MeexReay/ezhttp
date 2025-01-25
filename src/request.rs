@@ -6,39 +6,70 @@ use std::{
 use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// Request URL
+
+/// Request URL root (scheme://domain:port)
+#[derive(Clone, Debug)]
+pub struct RootURL {
+    pub scheme: String,
+    pub domain: String,
+    pub port: u16
+}
+
+impl FromStr for RootURL {
+    type Err = HttpError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let (scheme, host) = text.split_once("://").ok_or(HttpError::UrlError)?;
+        let (domain, port) = host.split_once(":").unwrap_or(match scheme {
+            "https" => (host, "443"),
+            "http" => (host, "80"),
+            _ => { return Err(HttpError::UrlError) }
+        });
+        let port = port.parse::<u16>().or(Err(HttpError::UrlError))?;
+        let scheme= scheme.to_string();
+        let domain= domain.to_string();
+        Ok(RootURL { scheme, domain, port })
+    }
+}
+
+impl ToString for RootURL {
+    fn to_string(&self) -> String {
+        format!("{}://{}", self.scheme, {
+            if (self.scheme == "http" && self.port == 80) || 
+                    (self.scheme == "https" && self.port == 443) {
+                format!("{}", self.domain)
+            } else {
+                format!("{}:{}", self.domain, self.port)
+            }
+        })
+    }
+}
+
+/// Request URL ({root}/path?query_key=query_value#anchor)
 #[derive(Clone, Debug)]
 pub struct URL {
+    pub root: Option<RootURL>,
     pub path: String,
-    pub domain: String,
     pub anchor: Option<String>,
-    pub query: HashMap<String, String>,
-    pub scheme: String,
-    pub port: u16
+    pub query: HashMap<String, String>
 }
 
 impl URL {
     pub fn new(
-        domain: String,
-        port: u16,
+        root: Option<RootURL>,
         path: String,
         anchor: Option<String>,
         query: HashMap<String, String>,
-        scheme: String
     ) -> URL {
         URL {
             path,
-            domain,
             anchor,
             query,
-            scheme,
-            port
+            root
         }
     }
 
-    /// Turns URL object to url string without scheme, domain, port
-    /// Example: /123.html?k=v#anc
-    pub fn to_path_string(&self) -> String {
+    fn to_path_str(&self) -> String {
         format!("{}{}{}", self.path, if self.query.is_empty() {
             String::new()
         } else {
@@ -52,79 +83,109 @@ impl URL {
         })
     }
 
-    /// Turns string without scheme, domain, port to URL object
-    /// Example of string: /123.html?k=v#anc
-    pub fn from_path_string(s: &str, scheme: String, domain: String, port: u16) -> Option<Self> {
-        let (s, anchor) = s.split_once("#").unwrap_or((s, ""));
-        let (path, query) = s.split_once("?").unwrap_or((s, ""));
+    fn from_path_str(text: &str) -> Option<Self> {
+        let (text, anchor) = text.split_once("#").unwrap_or((text, ""));
+        let (path, query) = text.split_once("?").unwrap_or((text, ""));
+        let path = path.to_string();
 
-        let anchor = if anchor.is_empty() { None } else { Some(anchor.to_string()) };
-        let query = if query.is_empty() { HashMap::new() } else { {
+        let anchor = if anchor.is_empty() { 
+            None 
+        } else { 
+            Some(anchor.to_string()) 
+        };
+
+        let query = if query.is_empty() { 
+            HashMap::new() 
+        } else {
             HashMap::from_iter(query.split("&").filter_map(|entry| {
                 let (key, value) = entry.split_once("=").unwrap_or((entry, ""));
                 Some((urlencoding::decode(key).ok()?.to_string(), urlencoding::decode(value).ok()?.to_string()))
             }))
-        } };
-        let path = path.to_string();
-        let scheme = scheme.to_string();
-        Some(URL { path, domain, anchor, query, scheme, port })
+        };
+
+        Some(URL { root: None, path, anchor, query })
     }
 }
 
 impl FromStr for URL {
     type Err = HttpError;
 
-    /// Turns url string to URL object
-    /// Example: https://domain.com:999/123.html?k=v#anc
-    /// Example 2: http://exampl.eu/sing
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (scheme, s) = s.split_once("://").ok_or(HttpError::UrlError)?;
-        let (host, s) = s.split_once("/").unwrap_or((s, ""));
-        let (domain, port) = host.split_once(":").unwrap_or((host, 
-            if scheme == "http" { "80" } 
-            else if scheme == "https" { "443" } 
-            else { return Err(HttpError::UrlError) }
-        ));
-        let port = port.parse::<u16>().map_err(|_| HttpError::UrlError)?;
-        let (s, anchor) = s.split_once("#").unwrap_or((s, ""));
-        let (path, query) = s.split_once("?").unwrap_or((s, ""));
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        if text.starts_with("/") {
+            return Self::from_path_str(text).ok_or(HttpError::UrlError)
+        }
 
-        let anchor = if anchor.is_empty() { None } else { Some(anchor.to_string()) };
-        let query = if query.is_empty() { HashMap::new() } else { {
-            HashMap::from_iter(query.split("&").filter_map(|entry| {
-                let (key, value) = entry.split_once("=").unwrap_or((entry, ""));
-                Some((urlencoding::decode(key).ok()?.to_string(), urlencoding::decode(value).ok()?.to_string()))
-            }))
-        } };
-        let domain = domain.to_string();
-        let path = format!("/{path}");
-        let scheme = scheme.to_string();
-        Ok(URL { path, domain, anchor, query, scheme, port })
+        let (scheme_n_host, path) = match text.split_once("://") {
+            Some((scheme, host_n_path)) => {
+                match host_n_path.split_once("/") {
+                    Some((host, path)) => {
+                        (format!("{}://{}", scheme, host), format!("/{}", path))
+                    }, None => {
+                        (format!("{}://{}", scheme, host_n_path), "/".to_string())
+                    }
+                }
+            }, None => {
+                return Err(HttpError::UrlError)
+            }
+        };
+
+        let mut url = Self::from_path_str(&path).ok_or(HttpError::UrlError)?;
+        url.root = Some(RootURL::from_str(&scheme_n_host)?);
+
+        Ok(url)
     }
 }
 
 impl ToString for URL {
-    /// Turns URL object to string
-    /// Example: https://domain.com:999/123.html?k=v#anc
-    /// Example 2: http://exampl.eu/sing
     fn to_string(&self) -> String {
-        format!("{}://{}{}", self.scheme, {
-            if (self.scheme == "http" && self.port != 80) || (self.scheme == "https" && self.port != 443) {
-                format!("{}:{}", self.domain, self.port)
-            } else {
-                self.domain.clone()
-            }
-        }, self.to_path_string())
+        format!("{}{}", self.root.clone().map(|o| o.to_string()).unwrap_or_default(), self.to_path_str())
     }
 }
 
+pub trait IntoURL: ToString {
+    fn to_url(self) -> Result<URL, HttpError>;
+}
+
+impl IntoURL for &String {
+    fn to_url(self) -> Result<URL, HttpError> {
+        URL::from_str(&self)
+    }
+}
+
+impl IntoURL for String {
+    fn to_url(self) -> Result<URL, HttpError> {
+        URL::from_str(&self)
+    }
+}
+
+impl IntoURL for &str {
+    fn to_url(self) -> Result<URL, HttpError> {
+        URL::from_str(&self)
+    }
+}
+
+impl IntoURL for URL {
+    fn to_url(self) -> Result<URL, HttpError> {
+        Ok(self)
+    }
+}
+
+pub trait IntoRequest {
+    fn to_request(self) -> Result<HttpRequest, HttpError>;
+}
+
+impl IntoRequest for HttpRequest {
+    fn to_request(self) -> Result<HttpRequest, HttpError> {
+        Ok(self)
+    }
+}
 
 /// Http request
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
     pub url: URL,
     pub method: String,
-    pub addr: SocketAddr,
+    pub addr: Option<SocketAddr>,
     pub headers: Headers,
     pub body: Body
 }
@@ -138,19 +199,19 @@ impl Display for HttpRequest {
 impl HttpRequest {
     /// Create new http request
     pub fn new(
-        url: URL,
+        url: impl IntoURL,
         method: String,
-        addr: SocketAddr,
         headers: Headers,
-        body: Body
-    ) -> Self {
-        HttpRequest {
-            url,
+        body: Body,
+        addr: Option<SocketAddr>
+    ) -> Result<Self, HttpError> {
+        Ok(HttpRequest {
+            url: url.to_url()?,
             method,
-            addr,
             headers,
-            body
-        }
+            body,
+            addr
+        })
     }
 
     /// Read http request from stream
@@ -170,18 +231,13 @@ impl HttpRequest {
         let headers = Headers::recv(stream).await?;
         let body = Body::recv(stream, &headers).await?;
 
-        Ok(HttpRequest::new(
-            URL::from_path_string(
-                &page, 
-                "http".to_string(), 
-                "localhost".to_string(), 
-                80
-            ).ok_or(HttpError::UrlError)?,
+        HttpRequest::new(
+            page,
             method, 
-            addr.clone(), 
             headers, 
-            body
-        ))
+            body,
+            Some(addr.clone())
+        )
     }
 
     /// Get multipart parts (requires Content-Type header)
@@ -214,10 +270,13 @@ impl Sendable for HttpRequest {
         &self,
         stream: &mut (dyn AsyncWrite + Unpin + Send + Sync),
     ) -> Result<(), HttpError> {
+        let mut url = self.url.clone();
+        url.root = None;
+
         let mut head: String = String::new();
         head.push_str(&self.method);
         head.push_str(" ");
-        head.push_str(&self.url.to_path_string());
+        head.push_str(&url.to_string());
         head.push_str(" HTTP/1.1");
         head.push_str("\r\n");
         stream.write_all(head.as_bytes()).await.map_err(|_| HttpError::WriteHeadError)?;

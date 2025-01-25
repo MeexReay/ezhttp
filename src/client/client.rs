@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::{error::HttpError, headers::Headers, prelude::HttpResponse, request::HttpRequest};
+use crate::{error::HttpError, headers::Headers, prelude::HttpResponse, request::IntoRequest};
 
 use super::{send_request, Proxy};
 
@@ -107,9 +107,9 @@ impl HttpClient {
     }
 
     /// Sends a request and receives a response
-    pub async fn send(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
+    pub async fn send(&self, request: impl IntoRequest) -> Result<HttpResponse, HttpError> {
         send_request(
-            request, 
+            request.to_request()?, 
             self.ssl_verify, 
             self.proxy.clone(), 
             self.headers.clone(),

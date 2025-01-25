@@ -1,58 +1,63 @@
-use std::{collections::HashMap, net::ToSocketAddrs};
+use std::collections::HashMap;
 
 use serde_json::Value;
 
-use super::{super::body::{Body, Part}, gen_multipart_boundary, super::headers::Headers, super::request::{HttpRequest, URL}};
+use crate::{error::HttpError, request::{IntoRequest, IntoURL}};
+
+use super::{super::body::{Body, Part}, gen_multipart_boundary, super::headers::Headers, super::request::HttpRequest};
 
 /// Builder for [`HttpRequest`](HttpRequest)
+#[derive(Debug, Clone)]
 pub struct RequestBuilder {
     method: String,
-    url: URL,
+    url: String,
     headers: Headers,
-    body: Option<Body>
+    body: Option<Body>,
+    url_query: Option<HashMap<String, String>>
 }
 
 impl RequestBuilder {
     /// Create builder with a custom method
-    pub fn new(method: String, url: URL) -> Self {
+    pub fn new(method: String, url: impl IntoURL) -> Self {
         RequestBuilder { 
             method,
-            url,
+            url: url.to_string(),
             headers: Headers::new(),
-            body: None
+            body: None,
+            url_query: None
         }
     }
 
     /// Create builder for a GET request
-    pub fn get(url: URL) -> Self { Self::new("GET".to_string(), url) }
+    pub fn get(url: impl IntoURL) -> Self { Self::new("GET".to_string(), url) }
 
     /// Create builder for a HEAD request
-    pub fn head(url: URL) -> Self { Self::new("HEAD".to_string(), url) }
+    pub fn head(url: impl IntoURL) -> Self { Self::new("HEAD".to_string(), url) }
 
     /// Create builder for a POST request
-    pub fn post(url: URL) -> Self { Self::new("POST".to_string(), url) }
+    pub fn post(url: impl IntoURL) -> Self { Self::new("POST".to_string(), url) }
 
     /// Create builder for a PUT request
-    pub fn put(url: URL) -> Self { Self::new("PUT".to_string(), url) }
+    pub fn put(url: impl IntoURL) -> Self { Self::new("PUT".to_string(), url) }
 
     /// Create builder for a DELETE request
-    pub fn delete(url: URL) -> Self { Self::new("DELETE".to_string(), url) }
+    pub fn delete(url: impl IntoURL) -> Self { Self::new("DELETE".to_string(), url) }
 
     /// Create builder for a CONNECT request
-    pub fn connect(url: URL) -> Self { Self::new("CONNECT".to_string(), url) }
+    pub fn connect(url: impl IntoURL) -> Self { Self::new("CONNECT".to_string(), url) }
 
     /// Create builder for a OPTIONS request
-    pub fn options(url: URL) -> Self { Self::new("OPTIONS".to_string(), url) }
+    pub fn options(url: impl IntoURL) -> Self { Self::new("OPTIONS".to_string(), url) }
 
     /// Create builder for a TRACE request
-    pub fn trace(url: URL) -> Self { Self::new("TRACE".to_string(), url) }
+    pub fn trace(url: impl IntoURL) -> Self { Self::new("TRACE".to_string(), url) }
 
     /// Create builder for a PATCH request
-    pub fn patch(url: URL) -> Self { Self::new("PATCH".to_string(), url) }
+    pub fn patch(url: impl IntoURL) -> Self { Self::new("PATCH".to_string(), url) }
 
     /// Set request url
-    pub fn url(mut self, url: URL) -> Self {
-        self.url = url;
+    pub fn url(mut self, url: impl IntoURL) -> Self {
+        self.url = url.to_string();
         self
     }
 
@@ -108,7 +113,7 @@ impl RequestBuilder {
 
     /// Set query in url
     pub fn url_query(mut self, query: &[(impl ToString, impl ToString)]) -> Self {
-        self.url.query = HashMap::from_iter(query.iter().map(|o| (o.0.to_string(), o.1.to_string())));
+        self.url_query = Some(HashMap::from_iter(query.iter().map(|o| (o.0.to_string(), o.1.to_string()))));
         self
     }
 
@@ -119,13 +124,24 @@ impl RequestBuilder {
     }
 
     /// Build request
-    pub fn build(self) -> HttpRequest {
-        HttpRequest { 
-            url: self.url, 
+    pub fn build(self) -> Result<HttpRequest, HttpError> {
+        let mut url = self.url.to_url()?;
+        if let Some(query) = self.url_query {
+            url.query = query;
+        }
+
+        Ok(HttpRequest { 
+            url, 
             method: self.method,
-            addr: "localhost:80".to_socket_addrs().unwrap().next().unwrap(), 
+            addr: None, 
             headers: self.headers, 
             body: self.body.unwrap_or(Body::default())
-        }
+        })
+    }
+}
+
+impl IntoRequest for RequestBuilder {
+    fn to_request(self) -> Result<HttpRequest, HttpError> {
+        self.build()
     }
 }

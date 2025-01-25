@@ -18,7 +18,8 @@ pub enum HttpError {
     ConnectError,
     ShutdownError,
     SslError,
-    UnknownScheme
+    UnknownScheme,
+    UrlNeedsRootError
 }
 
 impl std::fmt::Display for HttpError {

@@ -51,11 +51,14 @@ async fn send_request(
     for (key, value) in headers.entries() {
         request.headers.put_default(key, value);
     }
+
+    let root = request.clone().url.root.ok_or(HttpError::UrlNeedsRootError)?;
+
     request.headers.put_default("Connection", "close".to_string());
-    request.headers.put_default("Host", request.url.domain.to_string());
+    request.headers.put_default("Host", root.domain.to_string());
     request.headers.put_default("Content-Length", request.body.as_bytes().len().to_string());
     
-    let site_host = format!("{}:{}", request.url.domain, request.url.port);
+    let site_host = format!("{}:{}", root.domain, root.port);
     let stream: Box<dyn RequestStream> = match connect_timeout {
         Some(connect_timeout) => {
             tokio::time::timeout(
@@ -72,8 +75,8 @@ async fn send_request(
     stream.set_read_timeout(read_timeout);
     let mut stream = Box::pin(stream);
     
-    if request.url.scheme == "https" {
-        let mut stream = ssl_wrapper(ssl_verify, request.url.domain.clone(), stream).await?;
+    if root.scheme == "https" {
+        let mut stream = ssl_wrapper(ssl_verify, root.domain.clone(), stream).await?;
         request.send(&mut stream).await?;
         Ok(HttpResponse::recv(&mut stream).await?)
     } else {
