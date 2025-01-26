@@ -75,7 +75,7 @@ impl RequestBuilder {
 
     /// Set header
     pub fn header(mut self, name: impl ToString, value: impl ToString) -> Self {
-        self.headers.put(name, value.to_string());
+        self.headers.add(name, value.to_string());
         self
     }
 

@@ -45,8 +45,13 @@ async fn connect_stream(proxy: Proxy, site_host: &str) -> Result<Box<dyn Request
 }
 
 async fn send_request(
-    mut request: HttpRequest, ssl_verify: bool, proxy: Proxy, headers: Headers,
-    connect_timeout: Option<Duration>, write_timeout: Option<Duration>, read_timeout: Option<Duration>
+    mut request: HttpRequest, 
+    ssl_verify: bool, 
+    proxy: Proxy, 
+    headers: Headers,
+    connect_timeout: Option<Duration>, 
+    write_timeout: Option<Duration>, 
+    read_timeout: Option<Duration>
 ) -> Result<HttpResponse, HttpError> {
     for (key, value) in headers.entries() {
         request.headers.put_default(key, value);
